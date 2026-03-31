@@ -1,0 +1,18 @@
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+/.vscode/
+
+/README.md
+
+# 测试输入输出目录
+/input/
+/output/
+
+# 模型大文件
+/model/florence2/model.safetensors
+/model/florence2/merges.txt
+/model/florence2/*.json
