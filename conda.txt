@@ -5,3 +5,5 @@ conda install -y numpy pillow matplotlib networkx shapely
 pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118
 pip install transformers==4.49.0 einops timm pytorch-metric-learning
 conda install ipykernel --update-deps --force-reinstall
+
+pip install httpx
