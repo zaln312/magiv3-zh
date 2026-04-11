@@ -1,3 +1,36 @@
+# 可视化tail
+def visualize_tail(image, result):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    image_np = np.array(image)
+
+    h, w = image_np.shape[:2]
+    if h > w:
+        fig, ax = plt.subplots(figsize=(8, 8 * h / w))
+    else:
+        fig, ax = plt.subplots(figsize=(8 * w / h, 8))
+
+    ax.imshow(image_np)
+
+    for i, bbox in enumerate(result["tails"]):
+        x1, y1, x2, y2 = bbox
+        width = x2 - x1
+        height = y2 - y1
+
+        rect = plt.Rectangle(
+            (x1, y1), width, height, linewidth=1, edgecolor="yellow", facecolor="none"
+        )
+        ax.add_patch(rect)
+
+        # 可选：显示 index
+        ax.text(x1, y1, str(i), color="yellow", fontsize=10)
+
+    ax.axis("off")
+    plt.show()
+
+
+# 对 ocr box 按阅读顺序排序
 from statistics import median
 
 
@@ -407,3 +440,146 @@ def get_ocr_results(image_paths: list[str], only_white_bg: bool, zh_texts: bool)
         return response.json()
     else:
         raise Exception(f"OCR 服务调用失败: {response.text}")
+
+
+# def crop_panels(img_paths, results):
+#     for img_path, result in zip(img_paths, results):
+#         _crop(img_path, result["boxes"])
+
+
+import io
+import base64
+from PIL import Image
+from openai import OpenAI
+
+
+def _get_caption(img: Image.Image, think: bool = False):
+    """
+    从单 panel 中获取描述
+    """
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    img_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+    client = OpenAI(base_url="http://localhost:8001/v1", api_key="EMPTY")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"},
+                },
+                {
+                    "type": "text",
+                    # "text": "描述这张图片。重点关注角色、他们的外貌、他们的动作以及环境。忽略图片中的任何文字、对话或对话气泡。",
+                    # "text": "Describe this image to me. Focus on the characters, their appearance, their actions, and the environment. Please ignore any text, dialogues, or speech bubbles in the image. Present the description in prose paragraph form, not as a list.",
+                    "text": "Describe this image in a single prose paragraph. For each character, start by clearly stating their relative position (e.g., 'the character on the left', 'in the foreground', 'the girl on the right'), then describe their appearance (hair, clothing), and finally their actions or emotions. Do not use specific names. Ignore all embedded text, speech bubbles, and dialogue. Focus purely on visual elements.",
+                },
+            ],
+        }
+    ]
+    if not think:
+        response = client.chat.completions.create(
+            model="Qwen3.5-4B",
+            messages=messages,
+            max_tokens=1024,
+            temperature=0.7,
+            top_p=0.8,
+            presence_penalty=1.5,
+            extra_body={
+                "top_k": 20,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+    else:
+        response = client.chat.completions.create(
+            model="Qwen3.5-4B",
+            messages=messages,
+            max_tokens=1024,
+            temperature=1.0,
+            top_p=0.95,
+            presence_penalty=1.5,
+            extra_body={
+                "top_k": 20,
+                "chat_template_kwargs": {"enable_thinking": True},
+            },
+        )
+    return response.choices[0].message.content
+
+
+def get_captions(image_paths: list[str], results: list[dict], think: bool):
+    assert len(image_paths) == len(results), "image_paths 和 results 长度不一致"
+
+    captions_list = []
+    for img_path, result in zip(image_paths, results):
+        # 对于单张 img
+        captions = []
+        img = Image.open(img_path)
+        for idx, panel in enumerate(result["panels"]):
+            img_panel = img.crop(panel)
+            img_panel.save(f"output/panel{idx}.jpg")
+            caption = _get_caption(img_panel, think)
+            captions.append(caption)
+        captions_list.append(captions)
+    return captions_list
+
+
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+
+
+def visualize_grounding(image, grounding_result):
+    caption = grounding_result["grounded_caption"]
+    bboxes = grounding_result["bboxes"]
+    indices = grounding_result["indices_of_bboxes_in_caption"]
+
+    draw_img = image.convert("RGB")
+    draw = ImageDraw.Draw(draw_img)
+    colors = ["#FF3333", "#33FF33", "#3333FF", "#FFFF33", "#FF33FF"]
+
+    # --- 逻辑 A: 角色归类 (保持不变) ---
+    unique_char_map = []
+    char_ids = []
+    for bbox_list in bboxes:
+        box = bbox_list[0]
+        found_id = -1
+        for i, u_box in enumerate(unique_char_map):
+            # 因为已经是像素坐标，阈值 50 像素通常是合理的
+            if np.linalg.norm(np.array(box[:2]) - np.array(u_box[:2])) < 50:
+                found_id = i
+                break
+        if found_id == -1:
+            found_id = len(unique_char_map)
+            unique_char_map.append(box)
+        char_ids.append(found_id)
+
+    # --- 逻辑 B: 文本插入 (保持不变) ---
+    indexed_items = sorted(zip(indices, char_ids), key=lambda x: x[0][0], reverse=True)
+    tagged_caption = caption
+    for (start, end), cid in indexed_items:
+        tag = f"[{cid}]"
+        tagged_caption = tagged_caption[:start] + tag + tagged_caption[start:]
+
+    # --- 逻辑 C: 绘制 Bbox (修复坐标) ---
+    for idx, (box, cid) in enumerate(zip(bboxes, char_ids)):
+        b = box[0]
+        
+        # 【核心修复】：直接使用原始值，不再乘以 width/1000
+        x_min, y_min, x_max, y_max = min(b[0], b[2]), min(b[1], b[3]), max(b[0], b[2]), max(b[1], b[3])
+        
+        color = colors[cid % len(colors)]
+        draw.rectangle([x_min, y_min, x_max, y_max], outline=color, width=3)
+        
+        # 标签绘制
+        label_y = y_min if y_min > 20 else y_max
+        try:
+            # 尝试画个背景，增加可读性
+            draw.rectangle([x_min, label_y - 20, x_min + 25, label_y], fill=color)
+            draw.text((x_min + 5, label_y - 18), str(cid), fill="white")
+        except: pass
+
+    return draw_img, tagged_caption

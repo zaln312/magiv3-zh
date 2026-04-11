@@ -3054,10 +3054,6 @@ class Florence2ForConditionalGeneration(Florence2PreTrainedModel):
             batch_indices_of_bboxes_in_generated_text,
         ) = processor.postprocess_output(generated_ids, images)
 
-        print("\n========== GENERATED TEXT ==========")
-        print(generated_texts[0])
-        print("====================================\n")
-
         map_to_category = {
             "<pa": "panels",
             "<te": "texts",
@@ -3098,10 +3094,6 @@ class Florence2ForConditionalGeneration(Florence2PreTrainedModel):
                 generated_id == processor.tokenizer.bos_token_id
             )[0][-1].item()
             cleaned_generated_ids.append(generated_id[index_of_last_bos:])
-            
-        print("\n=== [DEBUG] 真实的 Token 序列 ===")
-        print(processor.tokenizer.convert_ids_to_tokens(cleaned_generated_ids[0])[:100]) # 只看前100个防止刷屏
-        print("===================================")
 
         cleaned_generated_ids = pad_sequence(
             cleaned_generated_ids,
