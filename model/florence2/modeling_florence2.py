@@ -3131,139 +3131,25 @@ class Florence2ForConditionalGeneration(Florence2PreTrainedModel):
 
         return results
 
-    @torch.no_grad()
-    def predict_ocr(
-        self,
-        images,
-        processor,
-    ):
-        batch_inputs = processor(
-            batch_input_text=["What is the text in the image, with regions?"]
-            * len(images),
-            batch_input_list_of_list_of_bboxes=[[]] * len(images),
-            batch_images=images,
-            padding=True,
-            truncation=True,
-            max_input_length_including_image_tokens=1024,
-            max_output_length=1024,
-            return_tensors="pt",
-            dtype=self.dtype,
-            device=self.device,
-        )
-        generated_ids = self.generate(
-            input_ids=batch_inputs["input_ids"],
-            pixel_values=batch_inputs["pixel_values"],
-            max_new_tokens=1024,
-            do_sample=False,
-            num_beams=3,
-        )
-        (
-            generated_texts,
-            list_of_list_of_list_of_bboxes,
-            batch_indices_of_bboxes_in_generated_text,
-        ) = processor.postprocess_output(generated_ids, images)
-        results = []
-        for (
-            generated_text,
-            batch_indices_of_bboxes_in_generated_text,
-            list_of_list_of_bboxes,
-        ) in zip(
-            generated_texts,
-            batch_indices_of_bboxes_in_generated_text,
-            list_of_list_of_list_of_bboxes,
-        ):
-            ocr_texts = []
-            last_index = 0
-            for i, j in batch_indices_of_bboxes_in_generated_text:
-                ocr_texts.append(generated_text[last_index:j])
-                last_index = j
-            results.append(
-                {
-                    "ocr_texts": ocr_texts,
-                    "bboxes": [x[0] for x in list_of_list_of_bboxes],
-                }
-            )
-        return results
-
-    @torch.no_grad()
-    def predict_panels_only(
-        self,
-        images,
-        processor,
-        max_panels_per_image=None,  # 可选：限制每张图片检测的最大画格数
+    def extract_character_features(
+        self, decoder_hidden_states, decoder_input_ids, tokenizer
     ):
         """
-        仅检测漫画画格（panels）
+        返回 list of tensors, 每个 img 对应 [num_characters, 768]
         """
-        # 准备输入
-        batch_inputs = processor(
-            batch_input_text=["Find all panels in the image."]
-            * len(images),  # 修改提示词
-            batch_input_list_of_list_of_bboxes=[[]] * len(images),
-            batch_images=images,
-            padding=True,
-            truncation=True,
-            max_input_length_including_image_tokens=1024,
-            max_output_length=512,  # 减少输出长度，因为我们只检测画格
-            return_tensors="pt",
-            dtype=self.dtype,
-            device=self.device,
-        )
-
-        # 生成预测
-        generated_ids = self.generate(
-            input_ids=batch_inputs["input_ids"],
-            pixel_values=batch_inputs["pixel_values"],
-            max_new_tokens=512,  # 减少生成token数
-            do_sample=False,
-            num_beams=2,  # 减少beam search宽度以加速
-        )
-
-        # 后处理
-        (
-            generated_texts,
-            list_of_list_of_list_of_bboxes,
-            batch_indices_of_bboxes_in_generated_text,
-        ) = processor.postprocess_output(generated_ids, images)
-
-        map_to_category = {"<pa": "panels"}  # 只关心画格
-
-        results = []
-
-        for (
-            generated_text,
-            batch_indices_of_bboxes_in_generated_text,
-            list_of_list_of_bboxes,
-        ) in zip(
-            generated_texts,
-            batch_indices_of_bboxes_in_generated_text,
-            list_of_list_of_list_of_bboxes,
-        ):
-            # 只提取画格类别
-            categories = []
-            for i, j in batch_indices_of_bboxes_in_generated_text:
-                category = generated_text[j : j + 3]
-                if category == "<pa":  # 只保留画格
-                    categories.append("panels")
-                else:
-                    categories.append(None)
-
-            # 提取画格边界框
-            panels = []
-            for category, list_of_bboxes in zip(categories, list_of_list_of_bboxes):
-                if category == "panels" and list_of_bboxes:
-                    panels.extend(list_of_bboxes)
-
-            # 可选：限制最大画格数
-            if max_panels_per_image and len(panels) > max_panels_per_image:
-                panels = panels[:max_panels_per_image]
-
-            # 可选：根据置信度排序（假设bbox包含置信度）
-            # panels.sort(key=lambda x: x[-1] if len(x) == 5 else 1.0, reverse=True)
-
-            results.append({"panels": panels})
-
-        return results
+        char_features = []
+        char_token_id = tokenizer.convert_tokens_to_ids("<character>")
+        for b in range(decoder_hidden_states.size(0)):
+            indices = (decoder_input_ids[b] == char_token_id).nonzero(as_tuple=True)[0]
+            if indices.numel() == 0:
+                char_features.append(
+                    torch.empty(0, 768, device=decoder_hidden_states.device)
+                )
+                continue
+            hidden = decoder_hidden_states[b][indices]  # [N, projection_dim]
+            feats = self.character_embedding_projection(hidden)  # [N, 768]
+            char_features.append(feats)
+        return char_features
 
     @torch.no_grad()
     def predict_character_grounding(
