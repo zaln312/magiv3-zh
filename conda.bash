@@ -12,6 +12,8 @@ pip install httpx openai
 pip install bitsandbytes accelerate
 pip install dill
 
+pip install opencc-python-reimplemented
+
 # ------------------------------------------------------------
 # llamacpp
 

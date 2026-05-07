@@ -40,6 +40,7 @@ def get_ordered(unordered_ocr_result, panels):
         texts = unordered_ocr_result["texts"]
         img_path = unordered_ocr_result.get("img_path", "")
     except Exception:
+        print("unordered_ocr_result:", unordered_ocr_result)
         raise ValueError("unordered_ocr_result 结构错误")
 
     if len(boxes) != len(texts):
@@ -747,14 +748,13 @@ def predict_with_injected_ocr_and_global_id(
 import httpx
 
 
-def get_ocr_results(image_paths: list[str], only_white_bg: bool, zh_texts: bool):
+def user_get_ocr_results(image_paths: list[str]):
+    """
+    用户提供的 ocr api 调用
+    """
     url = "http://127.0.0.1:8000/ocr"
 
-    params = {
-        "image_paths": image_paths,
-        "only_white_bg": only_white_bg,
-        "zh_texts": zh_texts,
-    }
+    params = {"image_paths": image_paths}
 
     response = httpx.post(url, json=params, timeout=30.0)  # 设置合理的超时时间
 
@@ -762,6 +762,112 @@ def get_ocr_results(image_paths: list[str], only_white_bg: bool, zh_texts: bool)
         return response.json()
     else:
         raise Exception(f"OCR 服务调用失败: {response.text}")
+
+
+def user_format_ocr_results(results):
+    """
+    用户提供的 ocr results 格式化
+    """
+    return [
+        {
+            "img_path": res["input_path"],
+            "polys": res["rec_polys"],
+            "texts": res["rec_texts"],
+        }
+        for res in results
+    ]
+
+
+import numpy as np
+from typing import List, Union
+
+
+def check_format(results) -> bool:
+    """
+    校验 OCR 结果列表格式：
+    - 列表中的每一项必须是一个字典，包含键 img_path, polys, texts
+    - polys 与 texts 长度必须相等
+    - polys 中的每个多边形至少包含两个点，每个点可用 p[0], p[1] 分别获取 x, y 坐标
+    - texts 中的每个元素必须是字符串
+    """
+    if not isinstance(results, list):
+        raise TypeError(f"results 必须是列表，当前类型：{type(results)}")
+
+    for i, res in enumerate(results):
+        # 检查必要键是否存在
+        for key in ("img_path", "polys", "texts"):
+            if key not in res:
+                raise KeyError(
+                    f"results[{i}] 缺少必要键 '{key}'，实际键：{list(res.keys())}"
+                )
+
+        polys = res["polys"]
+        texts = res["texts"]
+
+        # 长度一致性检查
+        if not isinstance(polys, list):
+            raise TypeError(
+                f"results[{i}] 的 polys 必须是列表，当前类型：{type(polys)}"
+            )
+        if not isinstance(texts, list):
+            raise TypeError(
+                f"results[{i}] 的 texts 必须是列表，当前类型：{type(texts)}"
+            )
+
+        if len(polys) != len(texts):
+            raise ValueError(
+                f"results[{i}] 中 polys 长度 ({len(polys)}) 与 texts 长度 ({len(texts)}) 不一致"
+            )
+
+        # 检查每个多边形结构
+        for j, poly in enumerate(polys):
+            try:
+                # 提取所有 x, y 坐标，并验证至少有两个点
+                xs = [p[0] for p in poly]
+                ys = [p[1] for p in poly]
+                if len(xs) < 2 or len(ys) < 2:
+                    raise ValueError(f"多边形至少需要两个点")
+            except (TypeError, IndexError) as e:
+                raise ValueError(
+                    f"results[{i}] polys[{j}] 格式错误：无法提取坐标。"
+                    f"要求每个点为可索引对象（如 [x, y] 或 (x, y)），错误详情：{e}"
+                )
+
+        # 检查 texts 中的每个元素都是字符串
+        for j, text in enumerate(texts):
+            if not isinstance(text, str):
+                raise TypeError(
+                    f"results[{i}] texts[{j}] 必须是字符串，当前类型：{type(text)}"
+                )
+
+    # debug print
+    # print("results[0]", results[0])
+
+    # 全部通过
+    return True
+
+
+from paddle_utils import filter_white_bg, filter_texts, merge
+def preprocess_ocr_results(results, only_white_bg: bool, zh_texts: bool):
+    processed = []
+    for res in results:
+        if only_white_bg:
+            res = filter_white_bg(res)
+        if zh_texts:
+            res = filter_texts(res)
+        processed.append(merge(res))
+    return processed
+
+
+def get_ocr_results(img_paths: list[str], only_white_bg: bool, zh_texts: bool):
+
+    results = user_get_ocr_results(img_paths)
+    # print("第一个结果的键：", list(results[0].keys()))
+    results = user_format_ocr_results(results)
+    if not check_format(results):
+        raise ValueError("OCR 结果格式错误")
+    results = preprocess_ocr_results(results, only_white_bg, zh_texts)
+    return results
 
 
 # def crop_panels(img_paths, results):
