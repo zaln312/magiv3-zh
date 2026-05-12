@@ -1,5 +1,8 @@
 我想做一个magi studio系统，包含简单前后端。
 
+前端Vue，搭配现成的 UI 组件库，需要较强的画布交互能力。
+后端使用 Python 的轻量 Web 框架
+
 主要流程（部分代码见main.py）：
 
 1、上传图片。得到img_paths[img_idx]=list[str]。
@@ -24,7 +27,7 @@
 get_captions、get_prose_prompt、get_prose需要大语言模型。get_ocr_results需要文本检测+识别模型。以上四个方法会内部调用“支持用户自行实现api调用”的方法，例如user_get_ocr_results（ocr api 调用）；且get_ocr_results内部有“支持用户自行实现格式转换”的方法 user_format_ocr_results（ocr results 格式化）。
 此外系统内部有严格check_format用于校验 ocr results 格式。
 
-由于所有模型都是串行调用的，对于调用本地模型的情况（例如本系统提供的默认api调用 paddleocr和llamacpp），支持串行实时加载、卸载 当前需要用到的模型，以降低显存负担；也支持先全部加载完毕，不做动态加载、卸载。
+由于所有模型都是串行调用的，对于调用本地模型的情况（例如本系统提供的默认api调用 paddleocr （ocr server已外部实现）和llamacpp），支持串行实时加载、卸载 当前需要用到的模型，以降低显存负担；也支持先全部加载完毕，不做动态加载、卸载。
 
 用户的交互功能，每个功能独立页面，除了下面的功能不额外增加：
 
