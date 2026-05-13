@@ -38,6 +38,14 @@ conda activate llamacpp
 cd ~/文档/AAvscode/llama.cpp
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/targets/x86_64-linux/lib:$LD_LIBRARY_PATH
 
+# 0. Qwen3.5-0.8B
+./build/bin/llama-server \
+    -m ./models/Qwen3.5-0.8B-IQ4_NL.gguf \
+    --mmproj ./models/mmproj-F16-0.8B.gguf \
+    --ctx-size 8192 \
+    --port 8001 \
+    --host 127.0.0.1
+
 # 1. Qwen3.5-4B
 ./build/bin/llama-server \
     -m ./models/Qwen3.5-4B-IQ4_NL.gguf \
@@ -53,3 +61,19 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/targets/x86_64-linux/lib:
     --ctx-size 16384 \
     --port 8001 \
     --host 127.0.0.1
+
+
+# ------------------------------------------------------------
+# 后端
+pip install fastapi uvicorn python-multipart
+
+# 前端
+npx create-vite@5 frontend --template vue-ts
+cd frontend
+npm install
+npm install element-plus vue-router@4 konva vue-konva axios
+npm install vuedraggable@next
+
+
+# uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+# npm run dev

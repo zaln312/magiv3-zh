@@ -1473,3 +1473,26 @@ def get_prose_prompt(grounded_captions, panel_scripts):
         "I want you to write a summary in Chinese so that a blind or visually impaired person can understand the story. Make sure to stick to the provided details. All these panels belong to the same page so make sure your narrative is coherent. The format of the narrative should be a prose."
     )
     return prose_prompt
+
+
+def get_prose(prose_prompt: list[str]) -> str:
+    from openai import OpenAI
+
+    prompt_text = "\n".join(prose_prompt)
+
+    client = OpenAI(base_url="http://localhost:8001/v1", api_key="EMPTY")
+    response = client.chat.completions.create(
+        model="Qwen3.5-4B",
+        messages=[
+            {"role": "user", "content": prompt_text},
+        ],
+        max_tokens=4096,
+        temperature=0.7,
+        top_p=0.8,
+        presence_penalty=1.5,
+        extra_body={
+            "top_k": 20,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+    )
+    return response.choices[0].message.content

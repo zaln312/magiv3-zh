@@ -1,0 +1,8 @@
+# 上传文件
+uploads/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
