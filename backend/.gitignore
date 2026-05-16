@@ -6,3 +6,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# 测试目录
+/input/
+/output/
