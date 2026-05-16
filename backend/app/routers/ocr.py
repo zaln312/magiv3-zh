@@ -4,6 +4,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.utils.state import state
+from app.services.model_manager import model_manager
 
 router = APIRouter()
 
@@ -28,8 +29,21 @@ async def run_ocr(req: OcrRunRequest = OcrRunRequest()):
             zh_texts=req.zh_texts,
         )
         state.reset_from_ocr()
+
+        model_manager.load()
+        from ocr_utils import prepare_ordered_ocr_and_detect
+
+        _, _, _, _, ordered_ocr_results = prepare_ordered_ocr_and_detect(
+            model_manager.model,
+            model_manager.processor,
+            state.img_paths,
+            state.unordered_ocr_res,
+        )
+        state.unordered_ocr_res = ordered_ocr_results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OCR 识别失败: {str(e)}")
+    finally:
+        model_manager.unload()
 
     return {
         "success": True,
@@ -107,3 +121,49 @@ async def delete_ocr_box(data: dict):
     ocr_res["boxes"].pop(box_idx)
     ocr_res["texts"].pop(box_idx)
     return {"success": True}
+
+
+@router.post("/ocr/reorder")
+async def reorder_ocr_entries(data: dict):
+    img_idx = data.get("img_idx")
+    order = data.get("order")
+
+    if img_idx is None or order is None:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    if img_idx < 0 or img_idx >= len(state.unordered_ocr_res):
+        raise HTTPException(status_code=400, detail="img_idx 无效")
+
+    ocr_res = state.unordered_ocr_res[img_idx]
+    boxes = ocr_res.get("boxes", [])
+    texts = ocr_res.get("texts", [])
+
+    if len(order) != len(boxes) or len(order) != len(texts):
+        raise HTTPException(status_code=400, detail="order 长度不匹配")
+
+    new_boxes = [boxes[i] for i in order]
+    new_texts = [texts[i] for i in order]
+    ocr_res["boxes"] = new_boxes
+    ocr_res["texts"] = new_texts
+    return {"success": True}
+
+
+@router.post("/ocr/add_box")
+async def add_ocr_box(data: dict):
+    img_idx = data.get("img_idx")
+    box = data.get("box")
+    text = data.get("text", "")
+
+    if img_idx is None or box is None:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    if img_idx < 0 or img_idx >= len(state.unordered_ocr_res):
+        raise HTTPException(status_code=400, detail="img_idx 无效")
+
+    if len(box) != 4:
+        raise HTTPException(status_code=400, detail="box 格式应为 [x1, y1, x2, y2]")
+
+    ocr_res = state.unordered_ocr_res[img_idx]
+    ocr_res["boxes"].append(box)
+    ocr_res["texts"].append(text)
+    return {"success": True, "idx": len(ocr_res["boxes"]) - 1}

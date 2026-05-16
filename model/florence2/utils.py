@@ -102,11 +102,18 @@ def visualise_single_image_prediction(image_as_np_array, predictions, filename):
     plot_bboxes(subplot, predictions["characters"], color="blue")
 
     COLOURS = [
-        "#b7ff51", # green
-        "#f50a8f", # pink
-        "#4b13b6", # purple
-        "#ddaa34", # orange
-        "#bea2a2", # brown
+        "#FF6B6B",
+        "#3E7BFF",
+        "#FF9E4D",
+        "#C77DFF",
+        "#FF4E9F",
+        "#5E5CFF",
+        "#FFBD7A",
+        "#D96EFF",
+        "#FF4D7E",
+        "#4A8CFF",
+        "#E07BFF",
+        "#FF6B9D",
     ]
     colour_index = 0
     character_cluster_labels = predictions["character_cluster_labels"]

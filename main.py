@@ -14,7 +14,7 @@ uvicorn ocr_server:app
 # ocr 流程
 global_character_library = []
 
-from ocr_utils import get_ocr_results, predict_with_injected_ocr_and_global_id
+from ocr_utils import get_ocr_results, prepare_ordered_ocr_and_detect, predict_with_injected_ocr_and_global_id
 from model.florence2.utils import visualise_single_image_prediction
 
 unordered_ocr_res = get_ocr_results(img_paths, only_white_bg=False, zh_texts=True)
@@ -38,12 +38,23 @@ model = (
 )
 processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
 
-# predict
-results = predict_with_injected_ocr_and_global_id(
+# 前半部分：检测 + 排序（包含在 ocr 流程中）
+images, batch_inputs, generated_ids, results, ordered_ocr_results = prepare_ordered_ocr_and_detect(
     model,
     processor,
     img_paths,
     unordered_ocr_res,
+)
+
+# predict
+results = predict_with_injected_ocr_and_global_id(
+    model,
+    processor,
+    images,
+    batch_inputs,
+    generated_ids,
+    results,
+    ordered_ocr_results,
     global_character_library=global_character_library,
     debug=True,
 )

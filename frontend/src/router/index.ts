@@ -24,6 +24,16 @@ const router = createRouter({
       component: () => import('../views/CaptionView.vue'),
     },
     {
+      path: '/grounding',
+      name: 'grounding',
+      component: () => import('../views/GroundingView.vue'),
+    },
+    {
+      path: '/prose-prompt',
+      name: 'prose-prompt',
+      component: () => import('../views/ProsePromptView.vue'),
+    },
+    {
       path: '/prose',
       name: 'prose',
       component: () => import('../views/ProseView.vue'),

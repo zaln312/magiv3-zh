@@ -28,6 +28,7 @@
         <draggable
           v-model="imgPaths"
           :animation="200"
+          :item-key="(item: string) => item"
           ghost-class="image-card--ghost"
           chosen-class="image-card--chosen"
           drag-class="image-card--drag"

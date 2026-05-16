@@ -49,18 +49,6 @@
           />
         </div>
         <el-empty v-else description="暂无 Caption" :image-size="40" />
-
-        <h3 style="margin-top: 16px">Panel Script</h3>
-        <div v-if="currentPanelScript" class="panel-script">
-          <el-input
-            v-model="currentPanelScript"
-            type="textarea"
-            :rows="8"
-            resize="none"
-            @change="updatePanelScript"
-          />
-        </div>
-        <el-empty v-else description="暂无 Panel Script" :image-size="40" />
       </div>
     </div>
   </div>
@@ -95,10 +83,6 @@ const currentCaption = computed({
   get: () => currentResult.value.caption || '',
   set: (val) => { if (results.value[currentImgIdx.value]) results.value[currentImgIdx.value].caption = val },
 })
-const currentPanelScript = computed({
-  get: () => currentResult.value.panel_script || '',
-  set: (val) => { if (results.value[currentImgIdx.value]) results.value[currentImgIdx.value].panel_script = val },
-})
 const currentTextBoxes = computed(() => currentResult.value.texts || [])
 const currentCharacters = computed(() => currentResult.value.characters || [])
 const currentGlobalIds = computed(() => currentResult.value.global_character_ids || [])
@@ -110,20 +94,20 @@ const imageConfig = computed(() => ({ image: imageObj.value, width: canvasWidth.
 function toCanvasX(x: number) { return x * scaleX.value }
 function toCanvasY(y: number) { return y * scaleY.value }
 
-function getTextBoxConfig(idx: number, box: number[]) {
-  const x = toCanvasX(box[0]), y = toCanvasY(box[1])
-  return { x, y, width: toCanvasX(box[2]) - x, height: toCanvasY(box[3]) - y, stroke: '#00ff00', strokeWidth: 1, fill: 'rgba(0,255,0,0.03)', name: 'tbox-' + idx }
+function getTextBoxConfig(idx: number | string, box: any[]) {
+  const x = toCanvasX(Number(box[0])), y = toCanvasY(Number(box[1]))
+  return { x, y, width: toCanvasX(Number(box[2])) - x, height: toCanvasY(Number(box[3])) - y, stroke: '#00ff00', strokeWidth: 1, fill: 'rgba(0,255,0,0.03)', name: 'tbox-' + idx }
 }
 
-function getCharBoxConfig(idx: number, box: number[]) {
-  const x = toCanvasX(box[0]), y = toCanvasY(box[1])
-  const gid = currentGlobalIds.value[idx] ?? idx
-  return { x, y, width: toCanvasX(box[2]) - x, height: toCanvasY(box[3]) - y, stroke: getColor(gid), strokeWidth: 2, fill: 'rgba(0,0,0,0)', name: 'cbox-' + idx }
+function getCharBoxConfig(idx: number | string, box: any[]) {
+  const x = toCanvasX(Number(box[0])), y = toCanvasY(Number(box[1]))
+  const gid = currentGlobalIds.value[Number(idx)] ?? Number(idx)
+  return { x, y, width: toCanvasX(Number(box[2])) - x, height: toCanvasY(Number(box[3])) - y, stroke: getColor(gid), strokeWidth: 2, fill: 'rgba(0,0,0,0)', name: 'cbox-' + idx }
 }
 
-function getCharLabelConfig(idx: number, box: number[]) {
-  const gid = currentGlobalIds.value[idx] ?? idx
-  return { x: toCanvasX(box[0]), y: Math.max(0, toCanvasY(box[1]) - 18), text: `${gid}`, fontSize: 14, fill: '#fff', name: 'clabel-' + idx }
+function getCharLabelConfig(idx: number | string, box: any[]) {
+  const gid = currentGlobalIds.value[Number(idx)] ?? Number(idx)
+  return { x: toCanvasX(Number(box[0])), y: Math.max(0, toCanvasY(Number(box[1])) - 18), text: `${gid}`, fontSize: 14, fill: '#fff', name: 'clabel-' + idx }
 }
 
 function getCharLineConfig(assoc: number[]) {
@@ -137,10 +121,6 @@ function getCharLineConfig(assoc: number[]) {
 
 async function updateCaption() {
   try { await captionApi.updateCaption(currentImgIdx.value, currentCaption.value) } catch { ElMessage.error('更新失败') }
-}
-
-async function updatePanelScript() {
-  try { await captionApi.updatePanelScript(currentImgIdx.value, currentPanelScript.value) } catch { ElMessage.error('更新失败') }
 }
 
 async function loadImage() {

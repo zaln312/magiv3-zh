@@ -47,6 +47,7 @@ def get_ordered(unordered_ocr_result, panels):
         raise ValueError("boxes 与 texts 数量不一致")
 
     if not panels:
+        print(f"[DEBUG get_ordered] {img_path}: 0 panels → skip ordering, return as-is")
         return unordered_ocr_result, []
 
     n = len(boxes)
@@ -132,6 +133,15 @@ def get_ordered(unordered_ocr_result, panels):
 
         panel_to_boxes[best_panel].append(i)
 
+    print(f"[DEBUG get_ordered] {img_path}: {len(panels)} panels, {n} boxes")
+    for pid in range(len(panels)):
+        idxs = panel_to_boxes[pid]
+        if idxs:
+            ys = [box_centers[j][1] for j in idxs]
+            print(
+                f"  panel {pid}: {len(idxs)} boxes, y range=[{min(ys):.0f}, {max(ys):.0f}]"
+            )
+
     # ---------- sort inside each panel ----------
     ordered_indices = []
     text_panel_associations = []  # 新增：每个排序后位置对应的 [原始索引, 面板索引]
@@ -183,6 +193,13 @@ def get_ordered(unordered_ocr_result, panels):
     # ---------- build result ----------
     ordered_boxes = [boxes[i] for i in ordered_indices]
     ordered_texts = [texts[i] for i in ordered_indices]
+
+    print(f"[DEBUG get_ordered] final order ({len(ordered_indices)} boxes):")
+    for new_i, (orig_i, (new_idx, pid)) in enumerate(
+        zip(ordered_indices, text_panel_associations)
+    ):
+        y1 = boxes[orig_i][1]
+        print(f"  [{new_i}] orig_idx={orig_i} panel={pid} y1={y1:.0f}")
 
     return {
         "img_path": img_path,
@@ -434,32 +451,9 @@ def predict_with_injected_ocr(
 
 
 @torch.no_grad()
-def predict_with_injected_ocr_and_global_id(
-    model,
-    processor,
-    img_paths,
-    unordered_ocr_results,
-    character_character_association_threshold=0.5,
-    text_character_association_threshold=0.8,
-    text_tail_association_threshold=0.8,
-    essential_text_threshold=0.8,
-    global_id_threshold=0.8,
-    global_character_library=None,
-    debug=False,
-):
-    from PIL import Image
-    from torch.nn.utils.rnn import pad_sequence
-    from scipy.optimize import linear_sum_assignment
-
-    if global_character_library is None:
-        global_character_library = []
-
+def run_detection(model, processor, img_paths):
     images = [Image.open(p).convert("RGB") for p in img_paths]
-    tokenizer = processor.tokenizer
 
-    # ─────────────────────────────────────────────
-    # Step 1: 原始 detection
-    # ─────────────────────────────────────────────
     batch_inputs = processor(
         batch_input_text=[
             "Find all panels, texts, characters, and speech-bubble tails in the image."
@@ -510,9 +504,68 @@ def predict_with_injected_ocr_and_global_id(
                 r[c].extend(bb)
         results.append(r)
 
-    # ─────────────────────────────────────────────
-    # Step 2: 构造 patched decoder ids（与你原来一致）
-    # ─────────────────────────────────────────────
+    return images, batch_inputs, generated_ids, results
+
+
+def prepare_ordered_ocr_and_detect(model, processor, img_paths, unordered_ocr_results):
+    images, batch_inputs, generated_ids, results = run_detection(
+        model, processor, img_paths
+    )
+
+    ordered_ocr_results = get_ordered_list(unordered_ocr_results, results)
+
+    print("\n" + "=" * 60)
+    print("[DEBUG prepare_ordered_ocr_and_detect]")
+    for i in range(len(img_paths)):
+        n_panels = len(results[i]["panels"])
+        n_boxes_raw = len(unordered_ocr_results[i]["boxes"])
+        n_boxes_ordered = len(ordered_ocr_results[i]["boxes"])
+        print(f"  Image {i}: {n_panels} panels, {n_boxes_raw} boxes")
+        if n_boxes_raw > 0:
+            raw_first_y = unordered_ocr_results[i]["boxes"][0][1]
+            ord_first_y = ordered_ocr_results[i]["boxes"][0][1]
+            print(f"    raw  first box y1={raw_first_y:.0f}")
+            print(f"    ord  first box y1={ord_first_y:.0f}")
+            if n_boxes_raw >= 3:
+                raw_ys = [
+                    unordered_ocr_results[i]["boxes"][j][1]
+                    for j in range(min(3, n_boxes_raw))
+                ]
+                ord_ys = [
+                    ordered_ocr_results[i]["boxes"][j][1]
+                    for j in range(min(3, n_boxes_ordered))
+                ]
+                print(f"    raw  first 3 y1: {[f'{y:.0f}' for y in raw_ys]}")
+                print(f"    ord  first 3 y1: {[f'{y:.0f}' for y in ord_ys]}")
+    print("=" * 60 + "\n")
+
+    return images, batch_inputs, generated_ids, results, ordered_ocr_results
+
+
+@torch.no_grad()
+def predict_with_injected_ocr_and_global_id(
+    model,
+    processor,
+    images,
+    batch_inputs,
+    generated_ids,
+    results,
+    ordered_ocr_results,
+    character_character_association_threshold=0.5,
+    text_character_association_threshold=0.8,
+    text_tail_association_threshold=0.8,
+    essential_text_threshold=0.8,
+    global_id_threshold=0.8,
+    global_character_library=None,
+    debug=False,
+):
+    from scipy.optimize import linear_sum_assignment
+
+    if global_character_library is None:
+        global_character_library = []
+
+    tokenizer = processor.tokenizer
+
     def encode_box_as_loc_tokens(box, w, h):
         x1, y1, x2, y2 = box
 
@@ -548,8 +601,6 @@ def predict_with_injected_ocr_and_global_id(
                 i += 1
         return buckets
 
-    ordered_ocr_results = get_ordered_list(unordered_ocr_results, results)
-
     patched_decoder_ids = []
 
     for img_idx, image in enumerate(images):
@@ -576,7 +627,6 @@ def predict_with_injected_ocr_and_global_id(
 
         patched_decoder_ids.append(torch.tensor(new_seq, device=model.device))
 
-        # 覆盖 text
         results[img_idx]["texts"] = [list(map(float, b)) for b in ext["boxes"]]
         results[img_idx]["ocr_texts"] = ext.get("texts", [])
         results[img_idx]["text_panel_associations"] = ext.get(
@@ -589,9 +639,6 @@ def predict_with_injected_ocr_and_global_id(
         padding_value=tokenizer.pad_token_id,
     )
 
-    # ─────────────────────────────────────────────
-    # Step 3: 手动 forward（关键！拿 hidden states）
-    # ─────────────────────────────────────────────
     image_features = model._encode_image(batch_inputs["pixel_values"])
     inputs_embeds, attention_mask = model._merge_input_ids_with_image_features(
         image_features, model.get_input_embeddings()(batch_inputs["input_ids"])
@@ -607,9 +654,6 @@ def predict_with_injected_ocr_and_global_id(
 
     decoder_hidden = lm_outputs.decoder_hidden_states[-1]
 
-    # ─────────────────────────────────────────────
-    # Step 4: association heads（与你原逻辑一致）
-    # ─────────────────────────────────────────────
     affinity = model.get_character_character_affinity_matrices(
         decoder_hidden, patched_decoder_ids, tokenizer, apply_sigmoid=True
     )
@@ -623,14 +667,10 @@ def predict_with_injected_ocr_and_global_id(
         decoder_hidden, patched_decoder_ids, tokenizer, apply_sigmoid=True
     )
 
-    # ⭐ 新增：character features
     char_features = model.extract_character_features(
         decoder_hidden, patched_decoder_ids, tokenizer
     )
 
-    # ─────────────────────────────────────────────
-    # Step 5: clustering + global ID
-    # ─────────────────────────────────────────────
     for i in range(len(results)):
 
         cluster_labels = UnionFind.from_adj_matrix(
@@ -654,7 +694,6 @@ def predict_with_injected_ocr_and_global_id(
             results[i]["global_character_ids"] = []
             continue
 
-        # ---- cluster 平均特征 ----
         cluster_ids = sorted(set(cluster_labels))
         cluster_feats = {}
         for cid in cluster_ids:
@@ -663,7 +702,6 @@ def predict_with_injected_ocr_and_global_id(
             f = f / f.norm()
             cluster_feats[cid] = f
 
-        # ---- Hungarian matching ----
         if not global_character_library:
             if debug:
                 print(f"\n[DEBUG] Image {i}: global library empty → create new IDs")
@@ -725,7 +763,6 @@ def predict_with_injected_ocr_and_global_id(
                     mapping[cid] = gid
                     assigned.add(gid)
 
-            # 未匹配 → 新建 ID
             for cid in cluster_ids:
                 if cid not in mapping:
                     gid = len(global_character_library)
@@ -848,6 +885,8 @@ def check_format(results) -> bool:
 
 
 from paddle_utils import filter_white_bg, filter_texts, merge
+
+
 def preprocess_ocr_results(results, only_white_bg: bool, zh_texts: bool):
     processed = []
     for res in results:
@@ -903,8 +942,6 @@ def _get_caption(img: Image.Image, think: bool = False):
                 },
                 {
                     "type": "text",
-                    # "text": "描述这张图片。重点关注角色、他们的外貌、他们的动作以及环境。忽略图片中的任何文字、对话或对话气泡。",
-                    # "text": "Describe this image to me. Focus on the characters, their appearance, their actions, and the environment. Please ignore any text, dialogues, or speech bubbles in the image. Present the description in prose paragraph form, not as a list.",
                     "text": "Describe this image in a single prose paragraph. For each character, start by clearly stating their relative position (e.g., 'the character on the left', 'in the foreground', 'the girl on the right'), then describe their appearance (hair, clothing), and finally their actions or emotions. Do not use specific names. Ignore all embedded text, speech bubbles, and dialogue. Focus purely on visual elements.",
                 },
             ],
@@ -1397,18 +1434,18 @@ def visualize_character_associations(images, results, output_dir="output"):
 
     # 预定义一组高对比度颜色
     color_palette = [
-        "#E00000",
-        "#00CE00",
-        "#0000FF",
-        "#DBDB06",
-        "#DD00DD",
-        "#00E0E0",
-        "#FFA500",
-        "#800080",
-        "#008000",
-        "#000080",
-        "#A52A2A",
-        "#D8A4AD",
+        "#FF6B6B",
+        "#3E7BFF",
+        "#FF9E4D",
+        "#C77DFF",
+        "#FF4E9F",
+        "#5E5CFF",
+        "#FFBD7A",
+        "#D96EFF",
+        "#FF4D7E",
+        "#4A8CFF",
+        "#E07BFF",
+        "#FF6B9D",
     ]
 
     for img_idx, (img, res) in enumerate(zip(images, results)):

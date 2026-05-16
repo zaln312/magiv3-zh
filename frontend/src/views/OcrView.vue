@@ -21,53 +21,101 @@
       <el-empty description="暂无 OCR 结果，请先执行 OCR 识别" />
     </div>
 
-    <div v-else class="ocr-workspace">
+    <div v-else class="ocr-workspace" ref="workspaceRef">
       <div class="canvas-container" ref="canvasContainer">
-        <v-stage ref="stageRef" :config="stageConfig" @mousedown="handleStageMouseDown">
+        <v-stage
+          ref="stageRef"
+          :config="stageConfig"
+          @mousedown="handleStageMouseDown"
+          @mousemove="handleStageMouseMove"
+          @mouseup="handleStageMouseUp"
+        >
           <v-layer>
             <v-image :config="imageConfig" />
+
             <v-rect
               v-for="(box, idx) in currentBoxes"
               :key="'box-' + idx"
               :config="getBoxConfig(idx, box)"
             />
-            <v-line
+
+            <v-rect
               v-for="(box, idx) in currentBoxes"
-              :key="'line-' + idx"
-              :config="getLineConfig(idx, box)"
+              :key="'label-bg-' + idx"
+              :config="getLabelBgConfig(idx, box)"
             />
+
             <v-text
               v-for="(box, idx) in currentBoxes"
-              :key="'text-' + idx"
-              :config="getTextConfig(idx)"
+              :key="'label-' + idx"
+              :config="getLabelConfig(idx, box)"
+            />
+
+            <v-circle
+              v-for="(box, idx) in currentBoxes"
+              :key="'handle-tl-' + idx"
+              :config="getHandleConfig(idx, box, 'tl')"
+            />
+
+            <v-circle
+              v-for="(box, idx) in currentBoxes"
+              :key="'handle-br-' + idx"
+              :config="getHandleConfig(idx, box, 'br')"
             />
           </v-layer>
         </v-stage>
       </div>
 
-      <div class="text-panel">
+      <div class="text-panel" ref="textPanelRef">
         <h3>文本列表</h3>
-        <div
-          v-for="(text, idx) in currentTexts"
-          :key="idx"
-          class="text-item"
-          :class="{ active: selectedBoxIdx === idx }"
-          @click="selectBox(idx)"
+        <draggable
+          v-model="currentTexts"
+          :animation="200"
+          :item-key="(_: string, idx: number) => idx"
+          ghost-class="text-entry--ghost"
+          chosen-class="text-entry--chosen"
+          drag-class="text-entry--drag"
+          @start="onTextDragStart"
+          @end="onTextDragEnd"
+          tag="div"
+          class="draggable-text-list"
         >
-          <span class="text-index">{{ idx }}</span>
-          <el-input
-            v-model="currentTexts[idx]"
-            size="small"
-            @change="updateText(idx, currentTexts[idx])"
-          />
-          <el-button
-            type="danger"
-            size="small"
-            circle
-            :icon="Delete"
-            @click.stop="deleteBox(idx)"
-          />
+          <template #item="{ element: text, index: idx }">
+            <div
+              :ref="(el: any) => setTextEntryRef(el, idx)"
+              class="text-entry"
+              :class="{ active: selectedBoxIdx === idx }"
+              @click="selectBox(idx)"
+            >
+              <div class="text-entry-header">
+                <span class="text-entry-id">{{ idx }}</span>
+                <span class="drag-handle">⠿</span>
+                <el-button
+                  type="danger"
+                  size="small"
+                  circle
+                  :icon="Delete"
+                  @click.stop="deleteBox(idx)"
+                />
+              </div>
+              <el-input
+                v-model="currentTexts[idx]"
+                type="textarea"
+                :autosize="{ minRows: 1, maxRows: 10 }"
+                class="text-entry-input"
+                @focus="selectBox(idx)"
+                @change="updateText(idx, currentTexts[idx])"
+              />
+            </div>
+          </template>
+        </draggable>
+
+        <div class="text-entry text-entry--add" @click="addBox">
+          <el-icon :size="22"><Plus /></el-icon>
+          <span>添加文本条目</span>
         </div>
+
+        <el-empty v-if="currentTexts.length === 0" description="暂无文本" :image-size="40" />
       </div>
     </div>
   </div>
@@ -77,7 +125,8 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Delete } from '@element-plus/icons-vue'
+import { Delete, Plus } from '@element-plus/icons-vue'
+import draggable from 'vuedraggable'
 import { ocrApi, predictApi } from '../api/endpoints'
 
 const router = useRouter()
@@ -95,6 +144,8 @@ const predictLoading = ref(false)
 
 const stageRef = ref<any>(null)
 const canvasContainer = ref<HTMLElement | null>(null)
+const textPanelRef = ref<HTMLElement | null>(null)
+const workspaceRef = ref<HTMLElement | null>(null)
 
 const imageObj = ref<HTMLImageElement | null>(null)
 const canvasWidth = ref(900)
@@ -103,6 +154,12 @@ const imageNaturalWidth = ref(1)
 const imageNaturalHeight = ref(1)
 const scaleX = ref(1)
 const scaleY = ref(1)
+
+const dragState = ref<{ boxIdx: number; corner: 'tl' | 'br' } | null>(null)
+const textEntryRefs = ref<Record<number, HTMLElement>>({})
+const oldTexts = ref<string[]>([])
+
+const HANDLE_RADIUS = 6
 
 const currentBoxes = computed(() => {
   if (currentImgIdx.value >= ocrResults.value.length) return []
@@ -140,61 +197,177 @@ function toCanvasY(y: number) {
   return y * scaleY.value
 }
 
+function toImageX(cx: number) {
+  return cx / scaleX.value
+}
+
+function toImageY(cy: number) {
+  return cy / scaleY.value
+}
+
 function getBoxConfig(idx: number, box: number[]) {
   const x = toCanvasX(box[0])
   const y = toCanvasY(box[1])
   const w = toCanvasX(box[2]) - x
   const h = toCanvasY(box[3]) - y
+  const isSelected = selectedBoxIdx.value === idx
   return {
-    x, y, width: w, height: h,
-    stroke: selectedBoxIdx.value === idx ? '#409eff' : '#00ff00',
-    strokeWidth: selectedBoxIdx.value === idx ? 2 : 1,
-    fill: 'rgba(0, 255, 0, 0.05)',
-    draggable: false,
+    x,
+    y,
+    width: w,
+    height: h,
+    stroke: isSelected ? '#409eff' : '#00cc66',
+    strokeWidth: isSelected ? 2.5 : 1.5,
+    fill: isSelected ? 'rgba(64, 158, 255, 0.08)' : 'rgba(0, 204, 102, 0.04)',
     name: 'box-' + idx,
+    listening: true,
   }
 }
 
-function getLineConfig(idx: number, box: number[]) {
-  const cx = toCanvasX((box[0] + box[2]) / 2)
-  const cy = toCanvasY((box[1] + box[3]) / 2)
-  const textX = canvasWidth.value + 10
-  const textY = 20 + idx * 40
+function getLabelBgConfig(idx: number, box: number[]) {
+  const x = toCanvasX(box[0])
+  const y = toCanvasY(box[1])
+  const isSelected = selectedBoxIdx.value === idx
+  const labelY = Math.max(0, y - 18)
+  const numDigits = String(idx).length
+  const bgWidth = numDigits * 7 + 6
   return {
-    points: [cx, cy, textX, textY],
-    stroke: '#999',
-    strokeWidth: 1,
-    dash: [4, 4],
-    name: 'line-' + idx,
+    x: x - 2,
+    y: labelY,
+    width: bgWidth,
+    height: 14,
+    fill: isSelected ? '#409eff' : '#00cc66',
+    cornerRadius: 3,
+    name: 'label-bg-' + idx,
+    listening: true,
   }
 }
 
-function getTextConfig(idx: number) {
-  const text = currentTexts.value[idx] || ''
-  const displayText = text.length > 15 ? text.slice(0, 15) + '...' : text
+function getLabelConfig(idx: number, box: number[]) {
+  const x = toCanvasX(box[0])
+  const y = toCanvasY(box[1])
+  const labelY = Math.max(0, y - 18)
   return {
-    x: canvasWidth.value + 10,
-    y: 20 + idx * 40,
-    text: `[${idx}] ${displayText}`,
-    fontSize: 13,
-    fill: selectedBoxIdx.value === idx ? '#409eff' : '#333',
-    name: 'text-' + idx,
+    x: x + 1,
+    y: labelY + 1,
+    text: `${idx}`,
+    fontSize: 12,
+    fontStyle: 'bold',
+    fill: '#fff',
+    name: 'label-' + idx,
+    listening: true,
+  }
+}
+
+function getHandleConfig(idx: number, box: number[], corner: 'tl' | 'br') {
+  const isSelected = selectedBoxIdx.value === idx
+  const cx = corner === 'tl' ? toCanvasX(box[0]) : toCanvasX(box[2])
+  const cy = corner === 'tl' ? toCanvasY(box[1]) : toCanvasY(box[3])
+  return {
+    x: cx,
+    y: cy,
+    radius: HANDLE_RADIUS,
+    fill: isSelected ? '#409eff' : '#00cc66',
+    stroke: '#fff',
+    strokeWidth: 2,
+    name: 'handle-' + corner + '-' + idx,
+    listening: true,
+  }
+}
+
+function setTextEntryRef(el: any, idx: number) {
+  if (el) {
+    textEntryRefs.value[idx] = el.$el || el
   }
 }
 
 function selectBox(idx: number) {
   selectedBoxIdx.value = idx
+  nextTick(() => {
+    const entry = textEntryRefs.value[idx]
+    if (entry) {
+      entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  })
 }
 
 function handleStageMouseDown(e: any) {
   const name = e.target?.name?.()
-  if (name && name.startsWith('box-')) {
-    const idx = parseInt(name.split('-')[1])
-    selectBox(idx)
-  } else if (name && name.startsWith('text-')) {
-    const idx = parseInt(name.split('-')[1])
-    selectBox(idx)
+  if (!name) {
+    selectedBoxIdx.value = null
+    return
   }
+
+  if (name.startsWith('handle-tl-')) {
+    const idx = parseInt(name.split('-')[2])
+    dragState.value = { boxIdx: idx, corner: 'tl' }
+    selectBox(idx)
+    e.evt.preventDefault()
+    return
+  }
+
+  if (name.startsWith('handle-br-')) {
+    const idx = parseInt(name.split('-')[2])
+    dragState.value = { boxIdx: idx, corner: 'br' }
+    selectBox(idx)
+    e.evt.preventDefault()
+    return
+  }
+
+  if (name.startsWith('box-')) {
+    const idx = parseInt(name.split('-')[1])
+    selectBox(idx)
+    return
+  }
+
+  if (name.startsWith('label-') || name.startsWith('label-bg-')) {
+    const idx = parseInt(name.split('-').pop()!)
+    selectBox(idx)
+    return
+  }
+
+  selectedBoxIdx.value = null
+}
+
+function handleStageMouseMove(_e: any) {
+  if (!dragState.value) return
+
+  const stage = stageRef.value?.getStage()
+  if (!stage) return
+
+  const pos = stage.getPointerPosition()
+  if (!pos) return
+
+  const imgX = toImageX(pos.x)
+  const imgY = toImageY(pos.y)
+
+  const { boxIdx, corner } = dragState.value
+  const boxes = ocrResults.value[currentImgIdx.value].boxes
+  const oldBox = boxes[boxIdx]
+  const newBox = [...oldBox]
+
+  if (corner === 'tl') {
+    newBox[0] = Math.max(0, Math.min(imgX, oldBox[2] - 10))
+    newBox[1] = Math.max(0, Math.min(imgY, oldBox[3] - 10))
+  } else {
+    newBox[2] = Math.max(oldBox[0] + 10, Math.min(imgX, imageNaturalWidth.value))
+    newBox[3] = Math.max(oldBox[1] + 10, Math.min(imgY, imageNaturalHeight.value))
+  }
+
+  boxes.splice(boxIdx, 1, newBox)
+}
+
+function handleStageMouseUp(_e: any) {
+  if (!dragState.value) return
+
+  const { boxIdx } = dragState.value
+  const box = ocrResults.value[currentImgIdx.value].boxes[boxIdx]
+
+  ocrApi.updateBox(currentImgIdx.value, boxIdx, [...box]).catch(() => {
+    ElMessage.error('更新框坐标失败')
+  })
+
+  dragState.value = null
 }
 
 async function updateText(idx: number, text: string) {
@@ -210,10 +383,64 @@ async function deleteBox(idx: number) {
     await ocrApi.deleteBox(currentImgIdx.value, idx)
     ocrResults.value[currentImgIdx.value].boxes.splice(idx, 1)
     ocrResults.value[currentImgIdx.value].texts.splice(idx, 1)
-    if (selectedBoxIdx.value === idx) selectedBoxIdx.value = null
+    if (selectedBoxIdx.value === idx) {
+      selectedBoxIdx.value = null
+    } else if (selectedBoxIdx.value !== null && selectedBoxIdx.value > idx) {
+      selectedBoxIdx.value--
+    }
     ElMessage.success('已删除')
   } catch {
     ElMessage.error('删除失败')
+  }
+}
+
+function onTextDragStart() {
+  oldTexts.value = [...currentTexts.value]
+}
+
+async function onTextDragEnd() {
+  if (oldTexts.value.length === 0) return
+
+  const newOrder = currentTexts.value.map((t) => oldTexts.value.indexOf(t))
+  const isChanged = newOrder.some((val, idx) => val !== idx)
+  if (!isChanged) {
+    oldTexts.value = []
+    return
+  }
+
+  const boxes = ocrResults.value[currentImgIdx.value].boxes
+  const oldBoxes = [...boxes]
+  const newBoxes = newOrder.map((i) => oldBoxes[i])
+  ocrResults.value[currentImgIdx.value].boxes = newBoxes
+
+  try {
+    await ocrApi.reorder(currentImgIdx.value, newOrder)
+  } catch {
+    currentTexts.value = oldTexts.value
+    ocrResults.value[currentImgIdx.value].boxes = oldBoxes
+    ElMessage.error('排序失败')
+  }
+  oldTexts.value = []
+}
+
+async function addBox() {
+  const imgW = imageNaturalWidth.value
+  const imgH = imageNaturalHeight.value
+  const boxW = Math.round(imgW * 0.15)
+  const boxH = Math.round(imgH * 0.06)
+  const cx = Math.round(imgW / 2 - boxW / 2)
+  const cy = Math.round(imgH / 2 - boxH / 2)
+  const newBox = [cx, cy, cx + boxW, cy + boxH]
+
+  try {
+    const res = await ocrApi.addBox(currentImgIdx.value, newBox, '')
+    const newIdx = res.data.idx
+    ocrResults.value[currentImgIdx.value].boxes.push(newBox)
+    ocrResults.value[currentImgIdx.value].texts.push('')
+    await nextTick()
+    selectBox(newIdx)
+  } catch {
+    ElMessage.error('添加失败')
   }
 }
 
@@ -227,9 +454,11 @@ async function loadImage() {
     imageNaturalHeight.value = img.naturalHeight
     imageObj.value = img
 
-    const containerWidth = canvasContainer.value?.clientWidth || 900
+    const workspaceWidth = workspaceRef.value?.clientWidth || 1200
     const maxHeight = 700
-    let w = containerWidth - 200
+    const textPanelWidth = 320
+    const gap = 16
+    let w = workspaceWidth - textPanelWidth - gap
     let h = (img.naturalHeight / img.naturalWidth) * w
     if (h > maxHeight) {
       h = maxHeight
@@ -270,6 +499,7 @@ async function runPredict() {
 
 watch(currentImgIdx, async () => {
   selectedBoxIdx.value = null
+  dragState.value = null
   await nextTick()
   await loadImage()
 })
@@ -279,7 +509,7 @@ onMounted(loadOcrResults)
 
 <style scoped>
 .ocr-page {
-  max-width: 1400px;
+  max-width: 1500px;
   margin: 0 auto;
 }
 
@@ -307,18 +537,20 @@ onMounted(loadOcrResults)
 .ocr-workspace {
   display: flex;
   gap: 16px;
+  align-items: flex-start;
 }
 
 .canvas-container {
-  flex: 1;
-  overflow: auto;
+  flex-shrink: 0;
+  overflow: hidden;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
   background: #f5f5f5;
+  cursor: default;
 }
 
 .text-panel {
-  width: 280px;
+  width: 320px;
   flex-shrink: 0;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
@@ -330,41 +562,132 @@ onMounted(loadOcrResults)
 .text-panel h3 {
   margin: 0 0 12px 0;
   font-size: 15px;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding-bottom: 8px;
+  z-index: 1;
 }
 
-.text-item {
+.text-entry {
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  cursor: grab;
+  transition: all 0.2s;
+  background: #fff;
+}
+
+.text-entry:hover {
+  border-color: #c0c0c0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.text-entry.active {
+  border-color: #409eff;
+  background: #ecf5ff;
+  box-shadow: 0 1px 6px rgba(64, 158, 255, 0.15);
+}
+
+.text-entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.drag-handle {
+  cursor: grab;
+  color: #999;
+  font-size: 16px;
+  line-height: 1;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.text-entry:hover .drag-handle {
+  opacity: 1;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.text-entry--ghost {
+  opacity: 0.4;
+  background: #f0f0f0;
+  border: 2px dashed #c0c0c0;
+}
+
+.text-entry--chosen {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.text-entry--drag {
+  opacity: 0.8;
+  transform: rotate(2deg);
+}
+
+.text-entry--add {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  padding: 4px;
-  border-radius: 4px;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed #d0d0d0;
+  color: #999;
+  padding: 14px 8px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
 }
 
-.text-item:hover {
-  background: #f0f0f0;
+.text-entry--add:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: #ecf5ff;
 }
 
-.text-item.active {
-  background: #e6f0ff;
-}
-
-.text-index {
-  width: 24px;
-  height: 24px;
+.text-entry-id {
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: #409eff;
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: bold;
   flex-shrink: 0;
 }
 
-.text-item .el-input {
-  flex: 1;
+.text-entry.active .text-entry-id {
+  background: #337ecc;
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.25);
+}
+
+.text-entry-input {
+  width: 100%;
+}
+
+.text-entry-input :deep(.el-textarea__inner) {
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  border-color: transparent;
+  background: transparent;
+  padding: 4px 6px;
+  box-shadow: none;
+}
+
+.text-entry.active .text-entry-input :deep(.el-textarea__inner) {
+  background: #fff;
+  border-color: #d9d9d9;
+}
+
+.text-entry-input :deep(.el-textarea__inner):focus {
+  border-color: #409eff;
+  background: #fff;
 }
 </style>

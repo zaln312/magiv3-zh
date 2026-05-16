@@ -17,12 +17,21 @@ async def run_predict():
 
     try:
         model_manager.load()
-        from ocr_utils import predict_with_injected_ocr_and_global_id
+        from ocr_utils import run_detection, predict_with_injected_ocr_and_global_id
+
+        images, batch_inputs, generated_ids, results = run_detection(
+            model_manager.model,
+            model_manager.processor,
+            state.img_paths,
+        )
 
         state.results = predict_with_injected_ocr_and_global_id(
             model_manager.model,
             model_manager.processor,
-            state.img_paths,
+            images,
+            batch_inputs,
+            generated_ids,
+            results,
             state.unordered_ocr_res,
             global_character_library=state.global_character_library,
             debug=False,
@@ -30,6 +39,8 @@ async def run_predict():
         state.reset_from_predict()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Predict 失败: {str(e)}")
+    finally:
+        model_manager.unload()
 
     return {
         "success": True,
@@ -116,10 +127,25 @@ async def add_character(data: dict):
     result = state.results[img_idx]
     result.setdefault("characters", []).append(box)
 
-    max_gid = max(result.get("global_character_ids", []), default=-1)
-    result.setdefault("global_character_ids", []).append(max_gid + 1)
+    if state.global_character_library:
+        existing_ids = {entry["global_id"] for entry in state.global_character_library}
+        assigned_gid = min(existing_ids)
+    else:
+        used_ids = set()
+        for r in state.results:
+            for gid in r.get("global_character_ids", []):
+                if isinstance(gid, (int, float)):
+                    used_ids.add(int(gid))
+        for entry in state.global_character_library:
+            used_ids.add(entry["global_id"])
+        assigned_gid = 0
+        while assigned_gid in used_ids:
+            assigned_gid += 1
+        state.global_character_library.append({"global_id": assigned_gid})
 
-    return {"success": True, "char_idx": len(result["characters"]) - 1}
+    result.setdefault("global_character_ids", []).append(assigned_gid)
+
+    return {"success": True, "char_idx": len(result["characters"]) - 1, "global_id": assigned_gid}
 
 
 @router.post("/predict/update_text_char_association")

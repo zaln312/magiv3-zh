@@ -64,6 +64,11 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/targets/x86_64-linux/lib:
 
 
 # ------------------------------------------------------------
+# Chat2API
+./Chat2API-1.3.0-x86_64.AppImage --no-sandbox
+
+
+# ------------------------------------------------------------
 # 后端
 pip install fastapi uvicorn python-multipart
 
@@ -75,5 +80,9 @@ npm install element-plus vue-router@4 konva vue-konva axios
 npm install vuedraggable@next
 
 
-# uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
-# npm run dev
+# 启动
+cd backend
+uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+
+cd frontend
+npm run dev

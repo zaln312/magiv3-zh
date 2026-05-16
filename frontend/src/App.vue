@@ -11,6 +11,8 @@
           <el-menu-item index="/ocr">OCR 识别</el-menu-item>
           <el-menu-item index="/predict">Predict 预测</el-menu-item>
           <el-menu-item index="/caption">Caption 描述</el-menu-item>
+          <el-menu-item index="/grounding">Grounding 指代</el-menu-item>
+          <el-menu-item index="/prose-prompt">Prose Prompt</el-menu-item>
           <el-menu-item index="/prose">Prose 叙述</el-menu-item>
         </el-menu>
       </el-header>

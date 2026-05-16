@@ -6,8 +6,8 @@
         <el-select v-model="currentImgIdx" placeholder="选择图片" style="width: 200px">
           <el-option v-for="(_, idx) in results" :key="idx" :label="`图片 ${idx + 1}`" :value="idx" />
         </el-select>
-        <el-button type="primary" @click="runProse" :loading="proseLoading">
-          执行 Prose
+        <el-button type="primary" @click="runProsePrompt" :loading="prosePromptLoading">
+          构建 Prose Prompt
         </el-button>
       </div>
     </div>
@@ -45,7 +45,6 @@
             type="textarea"
             :rows="14"
             resize="none"
-            @change="updateGroundedCaption"
           />
         </div>
         <el-empty v-else description="暂无 Grounded Caption" :image-size="40" />
@@ -69,7 +68,7 @@ function getColor(id: number) { return COLORS[id % COLORS.length] }
 
 const results = ref<any[]>([])
 const currentImgIdx = ref(0)
-const proseLoading = ref(false)
+const prosePromptLoading = ref(false)
 
 const canvasContainer = ref<HTMLElement | null>(null)
 const imageObj = ref<HTMLImageElement | null>(null)
@@ -94,20 +93,20 @@ const imageConfig = computed(() => ({ image: imageObj.value, width: canvasWidth.
 function toCanvasX(x: number) { return x * scaleX.value }
 function toCanvasY(y: number) { return y * scaleY.value }
 
-function getTextBoxConfig(idx: number, box: number[]) {
-  const x = toCanvasX(box[0]), y = toCanvasY(box[1])
-  return { x, y, width: toCanvasX(box[2]) - x, height: toCanvasY(box[3]) - y, stroke: '#00ff00', strokeWidth: 1, fill: 'rgba(0,255,0,0.03)', name: 'tbox-' + idx }
+function getTextBoxConfig(idx: number | string, box: any[]) {
+  const x = toCanvasX(Number(box[0])), y = toCanvasY(Number(box[1]))
+  return { x, y, width: toCanvasX(Number(box[2])) - x, height: toCanvasY(Number(box[3])) - y, stroke: '#00ff00', strokeWidth: 1, fill: 'rgba(0,255,0,0.03)', name: 'tbox-' + idx }
 }
 
-function getCharBoxConfig(idx: number, box: number[]) {
-  const x = toCanvasX(box[0]), y = toCanvasY(box[1])
-  const gid = currentGlobalIds.value[idx] ?? idx
-  return { x, y, width: toCanvasX(box[2]) - x, height: toCanvasY(box[3]) - y, stroke: getColor(gid), strokeWidth: 2, fill: 'rgba(0,0,0,0)', name: 'cbox-' + idx }
+function getCharBoxConfig(idx: number | string, box: any[]) {
+  const x = toCanvasX(Number(box[0])), y = toCanvasY(Number(box[1]))
+  const gid = currentGlobalIds.value[Number(idx)] ?? Number(idx)
+  return { x, y, width: toCanvasX(Number(box[2])) - x, height: toCanvasY(Number(box[3])) - y, stroke: getColor(gid), strokeWidth: 2, fill: 'rgba(0,0,0,0)', name: 'cbox-' + idx }
 }
 
-function getCharLabelConfig(idx: number, box: number[]) {
-  const gid = currentGlobalIds.value[idx] ?? idx
-  return { x: toCanvasX(box[0]), y: Math.max(0, toCanvasY(box[1]) - 18), text: `${gid}`, fontSize: 14, fill: '#fff', name: 'clabel-' + idx }
+function getCharLabelConfig(idx: number | string, box: any[]) {
+  const gid = currentGlobalIds.value[Number(idx)] ?? Number(idx)
+  return { x: toCanvasX(Number(box[0])), y: Math.max(0, toCanvasY(Number(box[1])) - 18), text: `${gid}`, fontSize: 14, fill: '#fff', name: 'clabel-' + idx }
 }
 
 function getCharLineConfig(assoc: number[]) {
@@ -117,10 +116,6 @@ function getCharLineConfig(assoc: number[]) {
   if (!tBox || !cBox) return { points: [0, 0, 0, 0], stroke: '#999', strokeWidth: 1, dash: [4, 4] }
   const gid = currentGlobalIds.value[cIdx] ?? cIdx
   return { points: [toCanvasX((tBox[0] + tBox[2]) / 2), toCanvasY((tBox[1] + tBox[3]) / 2), toCanvasX((cBox[0] + cBox[2]) / 2), toCanvasY((cBox[1] + cBox[3]) / 2)], stroke: getColor(gid), strokeWidth: 1.5, dash: [6, 4], name: 'cline-' + tIdx + '-' + cIdx }
-}
-
-async function updateGroundedCaption() {
-  try { await groundingApi.updateGroundedCaption(currentImgIdx.value, currentGroundedCaption.value) } catch { ElMessage.error('更新失败') }
 }
 
 async function loadImage() {
@@ -145,21 +140,33 @@ async function loadImage() {
 async function loadResults() {
   try {
     const res = await groundingApi.results()
+    console.log('[DEBUG] GroundingView loadResults 原始响应:', res.data)
+    console.log('[DEBUG] res.data.results:', res.data.results)
+    console.log('[DEBUG] res.data.count:', res.data.count)
     results.value = res.data.results || []
+    console.log('[DEBUG] results.value 长度:', results.value.length)
+    if (results.value.length > 0) {
+      console.log('[DEBUG] results[0] keys:', Object.keys(results.value[0]))
+      console.log('[DEBUG] results[0].grounded_caption:', results.value[0].grounded_caption?.substring(0, 80))
+    }
     if (results.value.length > 0) { await nextTick(); await loadImage() }
-  } catch { results.value = [] }
+  } catch (e) {
+    console.error('[DEBUG] GroundingView loadResults 异常:', e)
+    results.value = []
+  }
 }
 
-async function runProse() {
-  proseLoading.value = true
+async function runProsePrompt() {
+  prosePromptLoading.value = true
   try {
-    await proseApi.run()
-    ElMessage.success('Prose 完成')
-    router.push('/prose')
+    await proseApi.buildScripts()
+    await proseApi.buildPrompt()
+    ElMessage.success('Prose Prompt 构建完成')
+    router.push('/prose-prompt')
   } catch (e: any) {
-    ElMessage.error('Prose 失败: ' + (e.response?.data?.detail || e.message))
+    ElMessage.error('构建失败: ' + (e.response?.data?.detail || e.message))
   } finally {
-    proseLoading.value = false
+    prosePromptLoading.value = false
   }
 }
 

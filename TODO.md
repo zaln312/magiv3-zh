@@ -33,8 +33,8 @@ get_captions、get_prose_prompt、get_prose需要大语言模型。get_ocr_resul
 
 1、上传图片（支持多张上传）后，展示。支持选择删除，拖动排序。
 
-2、ocr识别后，对于每张图片，展示识别到的文本框box，框拉出虚线到画面外，与展示对应的文本内容的框text相连。
-box支持删除（同步删除对应text），拖动左上坐标、右下坐标 调整box。
+2、ocr识别后，对于每张图片，展示识别到的文本框box，框外有id标记，与文本内容列表的条目text对应。
+box支持删除（同步删除对应text），支持拖动左上坐标、右下坐标 调整box。
 text支持直接在框内编辑文本内容。
 
 3、predict后，对于每张图片，展示人物框character；通过text_character_associations关联的文本框box，通过虚线与文本框box相连。
@@ -47,7 +47,7 @@ character支持删除（如有，同步删除其与文本框box的全部关联�
 
 支持人物聚类微调功能。点击人物框，角色列表滚动定位到该人物的行，支持修改global_character_ids，修改角色名（即修改映射表变量）。
 
-5、character grounding后，对于一张图片，上面的每个panel框通过虚线，与图片外的grounded_caption框相连；图片中有为id分配不同颜色的角色框。grounded_caption框展示该panel的文本描述，人称代词处的[其对应id]使用颜色，与角色框颜色对应。
+5、character grounding后，对于每张图片，上面的一个panel框，对应右侧caption列表的一个grounded_caption文本框；图片中有为id分配不同颜色的角色框。grounded_caption框展示该panel的文本描述，人称代词处的[其对应id]使用颜色，与角色框颜色对应。
 
 7、prose_prompt构建后，文本展示。
 

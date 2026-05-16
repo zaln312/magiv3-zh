@@ -8,6 +8,21 @@ from app.services.model_manager import model_manager
 router = APIRouter()
 
 
+def _serialize_results(results: list) -> list:
+    serialized = []
+    for r in results:
+        s = {}
+        for k, v in r.items():
+            if hasattr(v, "tolist"):
+                s[k] = v.tolist()
+            elif isinstance(v, list):
+                s[k] = [x.tolist() if hasattr(x, "tolist") else x for x in v]
+            else:
+                s[k] = v
+        serialized.append(s)
+    return serialized
+
+
 @router.post("/grounding/run")
 async def run_grounding():
     if not state.captions:
@@ -49,6 +64,12 @@ async def run_grounding():
             grounded_captions.append(grounded_caption)
         state.grounded_captions = grounded_captions
 
+        print(f"[DEBUG] grounding/run: 完成, {len(state.grounded_captions)} 张图片")
+        for i, caps in enumerate(state.grounded_captions):
+            print(f"[DEBUG]   img[{i}]: {len(caps)} 个 panel grounded_captions")
+            for j, c in enumerate(caps):
+                print(f"[DEBUG]     panel[{j}]: {c[:80]}...")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Grounding 失败: {str(e)}")
 
@@ -61,7 +82,17 @@ async def run_grounding():
 
 @router.get("/grounding/results")
 async def get_grounding_results():
+    serialized_results = _serialize_results(state.results)
+
+    for i, (res, caps) in enumerate(zip(serialized_results, state.grounded_captions)):
+        res["grounded_caption"] = "\n\n".join(caps) if caps else ""
+
+    print(f"[DEBUG] grounding/results: 返回 {len(serialized_results)} 个 results")
+    for i, r in enumerate(serialized_results):
+        print(f"[DEBUG]   result[{i}] keys: {list(r.keys())}")
+        print(f"[DEBUG]   result[{i}].grounded_caption 前80字: {r.get('grounded_caption', '')[:80]}...")
+
     return {
-        "grounded_captions": state.grounded_captions,
-        "count": len(state.grounded_captions),
+        "results": serialized_results,
+        "count": len(serialized_results),
     }

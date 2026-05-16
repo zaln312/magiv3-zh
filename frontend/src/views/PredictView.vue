@@ -6,7 +6,10 @@
         <el-select v-model="currentImgIdx" placeholder="选择图片" style="width: 200px">
           <el-option v-for="(_, idx) in results" :key="idx" :label="`图片 ${idx + 1}`" :value="idx" />
         </el-select>
-        <el-button @click="addCharacterMode = !addCharacterMode" :type="addCharacterMode ? 'warning' : 'default'">
+        <el-button v-if="selectedCharIdx !== null" type="danger" @click="deleteSelectedCharacter">
+          删除人物框
+        </el-button>
+        <el-button v-else @click="addCharacterMode = !addCharacterMode" :type="addCharacterMode ? 'warning' : 'default'">
           {{ addCharacterMode ? '取消添加' : '添加人物框' }}
         </el-button>
         <el-button type="primary" @click="runCaption" :loading="captionLoading">
@@ -19,7 +22,7 @@
       <el-empty description="暂无 Predict 结果，请先执行 Predict" />
     </div>
 
-    <div v-else class="predict-workspace">
+    <div v-else class="predict-workspace" ref="workspaceRef">
       <div class="canvas-container" ref="canvasContainer">
         <v-stage ref="stageRef" :config="stageConfig"
           @mousedown="handleStageMouseDown"
@@ -29,68 +32,71 @@
           <v-layer>
             <v-image :config="imageConfig" />
 
-            <v-rect v-for="(box, idx) in currentTextBoxes" :key="'tbox-' + idx"
-              :config="getTextBoxConfig(idx, box)" />
-
             <v-line v-for="(assoc, idx) in currentAssociations" :key="'cline-' + idx"
               :config="getCharLineConfig(assoc)" />
 
             <v-rect v-for="(box, idx) in currentCharacters" :key="'cbox-' + idx"
               :config="getCharBoxConfig(idx, box)" />
 
+            <v-rect v-for="(box, idx) in currentCharacters" :key="'clabel-bg-' + idx"
+              :config="getCharLabelBgConfig(idx, box)" />
+
             <v-text v-for="(box, idx) in currentCharacters" :key="'clabel-' + idx"
               :config="getCharLabelConfig(idx, box)" />
+
+            <template v-for="(box, idx) in currentCharacters" :key="'chandle-tl-' + idx">
+              <v-circle v-if="selectedCharIdx === null && highlightedGlobalId === null" :config="getCharHandleConfig(idx, box, 'tl')" />
+            </template>
+
+            <template v-for="(box, idx) in currentCharacters" :key="'chandle-br-' + idx">
+              <v-circle v-if="selectedCharIdx === null && highlightedGlobalId === null" :config="getCharHandleConfig(idx, box, 'br')" />
+            </template>
+
+            <v-rect v-for="(box, idx) in currentTextBoxes" :key="'tbox-' + idx"
+              :config="getTextBoxConfig(idx, box)" />
           </v-layer>
         </v-stage>
       </div>
 
       <div class="side-panels">
-        <div class="char-list-panel">
-          <h3>角色列表</h3>
-          <div v-for="(char, idx) in currentCharacters" :key="'char-' + idx"
-            class="char-item"
-            :class="{ active: selectedCharIdx === idx }"
-            :style="{ borderLeftColor: getColor(currentGlobalIds[idx]) }"
-            @click="selectCharacter(idx)"
+        <div class="global-char-panel" ref="globalCharPanelRef">
+          <h3>全局角色库</h3>
+          <div
+            v-for="entry in sortedGlobalCharLibrary"
+            :key="entry.global_id"
+            :ref="(el: any) => setGlobalCharRef(el, entry.global_id)"
+            class="global-char-item"
+            :class="{ active: highlightedGlobalId === entry.global_id }"
+            @click="selectGlobalChar(entry.global_id)"
           >
-            <div class="char-header">
-              <span class="char-id" :style="{ background: getColor(currentGlobalIds[idx]) }">
-                {{ currentGlobalIds[idx] }}
-              </span>
+            <div class="global-char-header">
+              <span class="global-char-id">{{ entry.global_id }}</span>
+              <el-button
+                type="danger"
+                size="small"
+                circle
+                :icon="Delete"
+                @click.stop="deleteGlobalCharEntry(entry.global_id)"
+              />
+            </div>
+            <div @click.stop>
               <el-input
-                v-model="charNameMap[currentGlobalIds[idx]]"
+                v-model="charNameMap[entry.global_id]"
+                type="text"
                 size="small"
                 placeholder="角色名"
-                @change="updateCharName(currentGlobalIds[idx], charNameMap[currentGlobalIds[idx]])"
-                @click.stop
+                class="global-char-input"
+                @focus="selectGlobalChar(entry.global_id)"
+                @change="updateCharName(entry.global_id, charNameMap[entry.global_id])"
               />
-              <el-button size="small" circle :icon="Delete" @click.stop="deleteCharacter(idx)" />
-            </div>
-
-            <div v-if="selectedCharIdx === idx" class="char-associations">
-              <div class="assoc-title">关联文本框：</div>
-              <el-checkbox-group v-model="selectedAssociations[idx]" @change="onAssocChange(idx)">
-                <el-checkbox v-for="tIdx in currentTextBoxes.keys()" :key="tIdx" :value="tIdx" :label="tIdx">
-                  [{{ tIdx }}] {{ (currentOcrTexts[tIdx] || '').slice(0, 10) }}
-                </el-checkbox>
-              </el-checkbox-group>
             </div>
           </div>
-        </div>
 
-        <div class="global-char-panel">
-          <h3>全局角色库</h3>
-          <div v-for="entry in globalCharLibrary" :key="entry.global_id" class="global-char-item">
-            <span class="global-id-tag" :style="{ background: getColor(entry.global_id) }">
-              {{ entry.global_id }}
-            </span>
-            <el-input
-              v-model="charNameMap[entry.global_id]"
-              size="small"
-              placeholder="角色名"
-              @change="updateCharName(entry.global_id, charNameMap[entry.global_id])"
-            />
+          <div class="global-char-item global-char-item--add" @click="addGlobalCharEntry">
+            <el-icon :size="22"><Plus /></el-icon>
+            <span>添加角色条目</span>
           </div>
+
           <el-empty v-if="!globalCharLibrary.length" description="暂无全局角色" :image-size="40" />
         </div>
       </div>
@@ -102,13 +108,12 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Delete } from '@element-plus/icons-vue'
+import { Delete, Plus } from '@element-plus/icons-vue'
 import { predictApi, captionApi, characterApi } from '../api/endpoints'
 
 const router = useRouter()
 
-const COLORS = ['#E00000', '#00CE00', '#0000FF', '#DBDB06', '#DD00DD', '#00E0E0',
-  '#FFA500', '#800080', '#008000', '#000080', '#A52A2A', '#D8A4AD']
+const COLORS = ['#FF6B6B', '#3E7BFF', '#FF9E4D', '#C77DFF', '#FF4E9F', '#5E5CFF', '#FFBD7A', '#D96EFF', '#FF4D7E', '#4A8CFF', '#E07BFF', '#FF6B9D']
 
 function getColor(id: number) {
   return COLORS[id % COLORS.length]
@@ -117,20 +122,28 @@ function getColor(id: number) {
 const results = ref<any[]>([])
 const currentImgIdx = ref(0)
 const selectedCharIdx = ref<number | null>(null)
+const highlightedGlobalId = ref<number | null>(null)
 const addCharacterMode = ref(false)
 const captionLoading = ref(false)
 const charNameMap = ref<Record<number, string>>({})
 const globalCharLibrary = ref<any[]>([])
 
+const sortedGlobalCharLibrary = computed(() => {
+  return [...globalCharLibrary.value].sort((a, b) => a.global_id - b.global_id)
+})
+
 const stageRef = ref<any>(null)
 const canvasContainer = ref<HTMLElement | null>(null)
+const workspaceRef = ref<HTMLElement | null>(null)
+const globalCharPanelRef = ref<HTMLElement | null>(null)
+const globalCharRefs = ref<Record<number, HTMLElement>>({})
 const imageObj = ref<HTMLImageElement | null>(null)
 const canvasWidth = ref(900)
 const canvasHeight = ref(600)
 const scaleX = ref(1)
 const scaleY = ref(1)
 
-const selectedAssociations = ref<Record<number, number[]>>({})
+const charDragState = ref<{ boxIdx: number; corner: 'tl' | 'br' } | null>(null)
 
 const currentResult = computed(() => {
   if (currentImgIdx.value >= results.value.length) return {}
@@ -148,47 +161,176 @@ const imageConfig = computed(() => ({ image: imageObj.value, width: canvasWidth.
 
 function toCanvasX(x: number) { return x * scaleX.value }
 function toCanvasY(y: number) { return y * scaleY.value }
+function toImageX(cx: number) { return cx / scaleX.value }
+function toImageY(cy: number) { return cy / scaleY.value }
 
 function getTextBoxConfig(idx: number, box: number[]) {
-  const x = toCanvasX(box[0]), y = toCanvasY(box[1])
+  const x = toCanvasX(box[0])
+  const y = toCanvasY(box[1])
+  const w = toCanvasX(box[2]) - x
+  const h = toCanvasY(box[3]) - y
+  const isCheckMode = selectedCharIdx.value !== null
+  const isGlobalMode = selectedCharIdx.value === null && highlightedGlobalId.value !== null
+
+  const associatedChars = currentAssociations.value
+    .filter(([t, c]: [number, number]) => t === idx)
+    .map(([t, c]: [number, number]) => c)
+
+  let fill: string
+  let stroke: string
+  let strokeWidth: number
+  let opacity: number
+
+  if (isCheckMode) {
+    const isAssociated = isTextAssociated(idx, selectedCharIdx.value!)
+    if (isAssociated) {
+      const color = getColor(currentGlobalIds.value[selectedCharIdx.value!])
+      fill = color + '30'
+      stroke = color
+      strokeWidth = 3
+      opacity = 1
+    } else {
+      fill = 'rgba(128,128,128,0.35)'
+      stroke = '#999'
+      strokeWidth = 1.5
+      opacity = 0.4
+    }
+  } else if (isGlobalMode) {
+    fill = 'rgba(128,128,128,0.35)'
+    stroke = '#999'
+    strokeWidth = 1.5
+    opacity = 0.4
+  } else if (associatedChars.length === 1) {
+    const charIdx = associatedChars[0]
+    const gid = currentGlobalIds.value[charIdx] ?? charIdx
+    const color = getColor(gid)
+    fill = color + '20'
+    stroke = color
+    strokeWidth = 2
+    opacity = 1
+  } else {
+    fill = 'rgba(0,204,102,0.04)'
+    stroke = '#00cc66'
+    strokeWidth = 1.5
+    opacity = 1
+  }
+
   return {
-    x, y,
-    width: toCanvasX(box[2]) - x,
-    height: toCanvasY(box[3]) - y,
-    stroke: '#00ff00', strokeWidth: 1,
-    fill: 'rgba(0,255,0,0.03)',
+    x, y, width: w, height: h,
+    fill, stroke, strokeWidth, opacity,
     name: 'tbox-' + idx,
+    listening: true,
   }
 }
 
+function isTextAssociated(textIdx: number, charIdx: number): boolean {
+  return currentAssociations.value.some(
+    ([t, c]: [number, number]) => t === textIdx && c === charIdx
+  )
+}
+
 function getCharBoxConfig(idx: number, box: number[]) {
-  const x = toCanvasX(box[0]), y = toCanvasY(box[1])
+  const x = toCanvasX(box[0])
+  const y = toCanvasY(box[1])
   const gid = currentGlobalIds.value[idx] ?? idx
+  const isSelected = selectedCharIdx.value === idx
+  const isHighlighted = selectedCharIdx.value === null && highlightedGlobalId.value !== null && highlightedGlobalId.value === gid
+  const isCheckMode = selectedCharIdx.value !== null
+  const isGlobalMode = selectedCharIdx.value === null && highlightedGlobalId.value !== null
+  const shouldDim = (isCheckMode && !isSelected) || (isGlobalMode && !isHighlighted)
   return {
     x, y,
     width: toCanvasX(box[2]) - x,
     height: toCanvasY(box[3]) - y,
     stroke: getColor(gid),
-    strokeWidth: selectedCharIdx.value === idx ? 3 : 2,
-    fill: 'rgba(0,0,0,0)',
+    strokeWidth: (isSelected || isHighlighted) ? 3 : 2,
+    fill: (isSelected || isHighlighted) ? getColor(gid) + '20' : 'rgba(0,0,0,0)',
+    opacity: shouldDim ? 0.15 : 1,
     name: 'cbox-' + idx,
   }
 }
 
-function getCharLabelConfig(idx: number, box: number[]) {
+function getCharLabelBgConfig(idx: number, box: number[]) {
+  const x = toCanvasX(box[0])
+  const y = toCanvasY(box[1])
   const gid = currentGlobalIds.value[idx] ?? idx
+  const isSelected = selectedCharIdx.value === idx
+  const isHighlighted = selectedCharIdx.value === null && highlightedGlobalId.value !== null && highlightedGlobalId.value === gid
+  const isCheckMode = selectedCharIdx.value !== null
+  const isGlobalMode = selectedCharIdx.value === null && highlightedGlobalId.value !== null
+  const shouldDim = (isCheckMode && !isSelected) || (isGlobalMode && !isHighlighted)
+  const labelY = Math.max(0, y - 18)
+  const numDigits = String(gid).length
+  const bgWidth = numDigits * 7 + 6
   return {
-    x: toCanvasX(box[0]),
-    y: Math.max(0, toCanvasY(box[1]) - 18),
+    x: x - 2,
+    y: labelY,
+    width: bgWidth,
+    height: 14,
+    fill: getColor(gid),
+    cornerRadius: 3,
+    opacity: shouldDim ? 0.15 : 1,
+    name: 'clabel-bg-' + idx,
+    listening: true,
+  }
+}
+
+function getCharLabelConfig(idx: number, box: number[]) {
+  const x = toCanvasX(box[0])
+  const y = toCanvasY(box[1])
+  const gid = currentGlobalIds.value[idx] ?? idx
+  const isSelected = selectedCharIdx.value === idx
+  const isHighlighted = selectedCharIdx.value === null && highlightedGlobalId.value !== null && highlightedGlobalId.value === gid
+  const isCheckMode = selectedCharIdx.value !== null
+  const isGlobalMode = selectedCharIdx.value === null && highlightedGlobalId.value !== null
+  const shouldDim = (isCheckMode && !isSelected) || (isGlobalMode && !isHighlighted)
+  const labelY = Math.max(0, y - 18)
+  return {
+    x: x + 1,
+    y: labelY + 1,
     text: `${gid}`,
-    fontSize: 14,
+    fontSize: 12,
+    fontStyle: 'bold',
     fill: '#fff',
+    opacity: shouldDim ? 0.15 : 1,
     name: 'clabel-' + idx,
+    listening: true,
+  }
+}
+
+const CHAR_HANDLE_RADIUS = 6
+
+function isCharActive(idx: number): boolean {
+  if (selectedCharIdx.value === idx) return true
+  const gid = currentGlobalIds.value[idx] ?? idx
+  return selectedCharIdx.value === null && highlightedGlobalId.value !== null && highlightedGlobalId.value === gid
+}
+
+function getCharHandleConfig(idx: number, box: number[], corner: 'tl' | 'br') {
+  const gid = currentGlobalIds.value[idx] ?? idx
+  const isSelected = selectedCharIdx.value === idx
+  const isHighlighted = selectedCharIdx.value === null && highlightedGlobalId.value !== null && highlightedGlobalId.value === gid
+  const isCheckMode = selectedCharIdx.value !== null
+  const isGlobalMode = selectedCharIdx.value === null && highlightedGlobalId.value !== null
+  const shouldDim = (isCheckMode && !isSelected) || (isGlobalMode && !isHighlighted)
+  const cx = corner === 'tl' ? toCanvasX(box[0]) : toCanvasX(box[2])
+  const cy = corner === 'tl' ? toCanvasY(box[1]) : toCanvasY(box[3])
+  return {
+    x: cx,
+    y: cy,
+    radius: CHAR_HANDLE_RADIUS,
+    fill: getColor(gid),
+    stroke: '#fff',
+    strokeWidth: 2,
+    opacity: shouldDim ? 0.15 : 1,
+    name: 'chandle-' + corner + '-' + idx,
+    listening: !isCharActive(idx),
   }
 }
 
 function getCharLineConfig(assoc: number[]) {
-  const tIdx = assoc[0], cIdx = assoc[1]
+  const tIdx = assoc[0]
+  const cIdx = assoc[1]
   const tBox = currentTextBoxes.value[tIdx]
   const cBox = currentCharacters.value[cIdx]
   if (!tBox || !cBox) return { points: [0, 0, 0, 0], stroke: '#999', strokeWidth: 1, dash: [4, 4] }
@@ -197,25 +339,143 @@ function getCharLineConfig(assoc: number[]) {
   const cx = toCanvasX((cBox[0] + cBox[2]) / 2)
   const cy = toCanvasY((cBox[1] + cBox[3]) / 2)
   const gid = currentGlobalIds.value[cIdx] ?? cIdx
+  const isSelected = selectedCharIdx.value === cIdx
+  const isCheckMode = selectedCharIdx.value !== null
+  const isGlobalMode = selectedCharIdx.value === null && highlightedGlobalId.value !== null
+  const shouldDim = (isCheckMode && !isSelected) || isGlobalMode
   return {
     points: [tx, ty, cx, cy],
     stroke: getColor(gid),
-    strokeWidth: 1.5,
+    strokeWidth: isSelected ? 3 : 1.5,
     dash: [6, 4],
+    opacity: shouldDim ? 0.15 : 1,
     name: 'cline-' + tIdx + '-' + cIdx,
+  }
+}
+
+function setGlobalCharRef(el: any, globalId: number) {
+  if (el) {
+    globalCharRefs.value[globalId] = el.$el || el
   }
 }
 
 function selectCharacter(idx: number) {
   if (selectedCharIdx.value === idx) {
     selectedCharIdx.value = null
+    highlightedGlobalId.value = null
   } else {
     selectedCharIdx.value = idx
+    const gid = currentGlobalIds.value[idx]
+    highlightedGlobalId.value = gid ?? idx
+    scrollToGlobalChar(gid ?? idx)
   }
+}
+
+function selectGlobalChar(globalId: number) {
+  if (selectedCharIdx.value !== null) {
+    const charIdx = selectedCharIdx.value
+    const oldGid = currentGlobalIds.value[charIdx] ?? charIdx
+    if (oldGid !== globalId) {
+      currentGlobalIds.value[charIdx] = globalId
+      highlightedGlobalId.value = globalId
+      characterApi.updateGlobalId(currentImgIdx.value, charIdx, globalId).catch(() => {})
+    }
+    scrollToGlobalChar(globalId)
+    return
+  }
+
+  if (highlightedGlobalId.value === globalId) {
+    highlightedGlobalId.value = null
+  } else {
+    highlightedGlobalId.value = globalId
+  }
+  scrollToGlobalChar(globalId)
+}
+
+function scrollToGlobalChar(globalId: number) {
+  nextTick(() => {
+    const el = globalCharRefs.value[globalId]
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  })
+}
+
+function toggleTextAssociation(textIdx: number) {
+  if (selectedCharIdx.value === null) return
+  const charIdx = selectedCharIdx.value
+  const currentAssocs: [number, number][] = [...(results.value[currentImgIdx.value].text_character_associations || [])]
+
+  const existingIdx = currentAssocs.findIndex(
+    ([t, c]: [number, number]) => t === textIdx && c === charIdx
+  )
+
+  if (existingIdx >= 0) {
+    currentAssocs.splice(existingIdx, 1)
+    predictApi.updateAssociation(currentImgIdx.value, textIdx, null).catch(() => {})
+  } else {
+    currentAssocs.push([textIdx, charIdx])
+    predictApi.updateAssociation(currentImgIdx.value, textIdx, charIdx).catch(() => {})
+  }
+
+  results.value[currentImgIdx.value].text_character_associations = currentAssocs
+}
+
+function deleteSelectedCharacter() {
+  if (selectedCharIdx.value === null) return
+  const charIdx = selectedCharIdx.value
+  predictApi.deleteCharacter(currentImgIdx.value, charIdx).then(() => {
+    results.value[currentImgIdx.value].characters.splice(charIdx, 1)
+    const gids = results.value[currentImgIdx.value].global_character_ids
+    if (charIdx < gids.length) {
+      gids.splice(charIdx, 1)
+    }
+    const assocs = results.value[currentImgIdx.value].text_character_associations || []
+    const newAssocs: [number, number][] = []
+    for (const [t, c] of assocs) {
+      if (c === charIdx) continue
+      newAssocs.push([t, c > charIdx ? c - 1 : c])
+    }
+    results.value[currentImgIdx.value].text_character_associations = newAssocs
+    selectedCharIdx.value = null
+    highlightedGlobalId.value = null
+    ElMessage.success('已删除人物框')
+  }).catch(() => {
+    ElMessage.error('删除人物框失败')
+  })
+}
+
+function deleteGlobalCharEntry(globalId: number) {
+  characterApi.deleteFromLibrary(globalId).then(() => {
+    globalCharLibrary.value = globalCharLibrary.value.filter(
+      (entry: any) => entry.global_id !== globalId
+    )
+    delete charNameMap.value[globalId]
+    if (highlightedGlobalId.value === globalId) {
+      highlightedGlobalId.value = null
+    }
+    ElMessage.success('已从全局角色库中删除')
+  }).catch((e: any) => {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  })
+}
+
+function addGlobalCharEntry() {
+  characterApi.addToLibrary().then((res) => {
+    const newGid = res.data.global_id
+    globalCharLibrary.value.push({ global_id: newGid })
+    nextTick(() => {
+      scrollToGlobalChar(newGid)
+    })
+    ElMessage.success('已添加角色条目')
+  }).catch((e: any) => {
+    ElMessage.error(e.response?.data?.detail || '添加失败')
+  })
 }
 
 function handleStageMouseDown(e: any) {
   const name = e.target?.name?.()
+
   if (addCharacterMode.value) {
     const stage = stageRef.value?.getStage()
     if (!stage) return
@@ -224,53 +484,109 @@ function handleStageMouseDown(e: any) {
     const imgX = pos.x / scaleX.value
     const imgY = pos.y / scaleY.value
     const box = [imgX, imgY, imgX + 50, imgY + 50]
-    predictApi.addCharacter(currentImgIdx.value, box).then(() => {
+    const wasLibraryEmpty = globalCharLibrary.value.length === 0
+    predictApi.addCharacter(currentImgIdx.value, box).then((res) => {
       results.value[currentImgIdx.value].characters.push(box)
-      const gids = results.value[currentImgIdx.value].global_character_ids
-      gids.push(gids.length > 0 ? Math.max(...gids) + 1 : 0)
+      const assignedGid = res.data.global_id
+      results.value[currentImgIdx.value].global_character_ids.push(assignedGid)
+      if (wasLibraryEmpty) {
+        loadCharLibrary().then(() => {
+          nextTick(() => {
+            scrollToGlobalChar(assignedGid)
+          })
+        })
+      }
       ElMessage.success('已添加人物框')
+    }).catch(() => {
+      ElMessage.error('添加人物框失败')
     })
     addCharacterMode.value = false
     return
   }
-  if (name && name.startsWith('cbox-')) {
-    selectCharacter(parseInt(name.split('-')[1]))
+
+  if (name && name.startsWith('chandle-tl-')) {
+    const idx = parseInt(name.split('-')[2])
+    charDragState.value = { boxIdx: idx, corner: 'tl' }
+    e.evt.preventDefault()
+    return
   }
+
+  if (name && name.startsWith('chandle-br-')) {
+    const idx = parseInt(name.split('-')[2])
+    charDragState.value = { boxIdx: idx, corner: 'br' }
+    e.evt.preventDefault()
+    return
+  }
+
+  if (name && name.startsWith('tbox-')) {
+    const idx = parseInt(name.split('-')[1])
+    if (selectedCharIdx.value !== null) {
+      toggleTextAssociation(idx)
+    }
+    return
+  }
+
+  if (name && name.startsWith('cbox-')) {
+    const idx = parseInt(name.split('-')[1])
+    selectCharacter(idx)
+    return
+  }
+
+  if (name && (name.startsWith('clabel-') || name.startsWith('clabel-bg-'))) {
+    const idx = parseInt(name.split('-').pop()!)
+    selectCharacter(idx)
+    return
+  }
+
+  selectedCharIdx.value = null
+  highlightedGlobalId.value = null
 }
 
-function handleStageMouseMove(_e: any) {}
-function handleStageMouseUp(_e: any) {}
+function handleStageMouseMove(_e: any) {
+  if (!charDragState.value) return
 
-async function deleteCharacter(idx: number) {
-  try {
-    await predictApi.deleteCharacter(currentImgIdx.value, idx)
-    results.value[currentImgIdx.value].characters.splice(idx, 1)
-    results.value[currentImgIdx.value].global_character_ids.splice(idx, 1)
-    if (selectedCharIdx.value === idx) selectedCharIdx.value = null
-    ElMessage.success('已删除人物框')
-  } catch { ElMessage.error('删除失败') }
+  const stage = stageRef.value?.getStage()
+  if (!stage) return
+
+  const pos = stage.getPointerPosition()
+  if (!pos) return
+
+  const imgX = toImageX(pos.x)
+  const imgY = toImageY(pos.y)
+
+  const { boxIdx, corner } = charDragState.value
+  const chars = results.value[currentImgIdx.value].characters
+  const oldBox = chars[boxIdx]
+  const newBox = [...oldBox]
+
+  if (corner === 'tl') {
+    newBox[0] = Math.max(0, Math.min(imgX, oldBox[2] - 10))
+    newBox[1] = Math.max(0, Math.min(imgY, oldBox[3] - 10))
+  } else {
+    newBox[2] = Math.max(oldBox[0] + 10, imgX)
+    newBox[3] = Math.max(oldBox[1] + 10, imgY)
+  }
+
+  chars.splice(boxIdx, 1, newBox)
+}
+
+function handleStageMouseUp(_e: any) {
+  if (!charDragState.value) return
+
+  const { boxIdx } = charDragState.value
+  const box = results.value[currentImgIdx.value].characters[boxIdx]
+
+  predictApi.updateCharacterBox(currentImgIdx.value, boxIdx, [...box]).catch(() => {
+    ElMessage.error('更新角色框坐标失败')
+  })
+
+  charDragState.value = null
 }
 
 async function updateCharName(globalId: number, name: string) {
   try {
     await characterApi.updateName(globalId, name)
   } catch { ElMessage.error('更新角色名失败') }
-}
-
-function onAssocChange(charIdx: number) {
-  const textIndices = selectedAssociations.value[charIdx] || []
-  const currentAssocs: [number, number][] = results.value[currentImgIdx.value].text_character_associations || []
-
-  const newAssocs = currentAssocs.filter(([t, c]: [number, number]) => c !== charIdx)
-  for (const tIdx of textIndices) {
-    newAssocs.push([tIdx, charIdx])
-  }
-  results.value[currentImgIdx.value].text_character_associations = newAssocs
-
-  predictApi.updateAssociation(currentImgIdx.value, -1, -1).catch(() => {})
-  for (const [t, c] of newAssocs) {
-    predictApi.updateAssociation(currentImgIdx.value, t, c).catch(() => {})
-  }
 }
 
 async function loadImage() {
@@ -280,11 +596,16 @@ async function loadImage() {
   img.src = `/api/images/serve/${currentImgIdx.value}?t=${Date.now()}`
   img.onload = () => {
     imageObj.value = img
-    const containerWidth = canvasContainer.value?.clientWidth || 900
+    const workspaceWidth = workspaceRef.value?.clientWidth || 1200
     const maxHeight = 700
-    let w = containerWidth - 320
+    const sidePanelWidth = 300
+    const gap = 16
+    let w = workspaceWidth - sidePanelWidth - gap
     let h = (img.naturalHeight / img.naturalWidth) * w
-    if (h > maxHeight) { h = maxHeight; w = (img.naturalWidth / img.naturalHeight) * h }
+    if (h > maxHeight) {
+      h = maxHeight
+      w = (img.naturalWidth / img.naturalHeight) * h
+    }
     canvasWidth.value = Math.floor(w)
     canvasHeight.value = Math.floor(h)
     scaleX.value = w / img.naturalWidth
@@ -326,6 +647,7 @@ async function runCaption() {
 
 watch(currentImgIdx, async () => {
   selectedCharIdx.value = null
+  highlightedGlobalId.value = null
   await nextTick()
   await loadImage()
 })
@@ -340,41 +662,124 @@ onMounted(() => { loadResults(); loadCharLibrary() })
 .header-actions { display: flex; gap: 12px; align-items: center; }
 .empty-state { margin-top: 60px; }
 
-.predict-workspace { display: flex; gap: 16px; }
-.canvas-container { flex: 1; overflow: auto; border: 1px solid #e0e0e0; border-radius: 4px; background: #f5f5f5; }
+.predict-workspace { display: flex; gap: 16px; align-items: flex-start; }
+
+.canvas-container {
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: default;
+}
 
 .side-panels { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
 
-.char-list-panel, .global-char-panel {
+.global-char-panel {
   border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;
-  max-height: 400px; overflow-y: auto;
+  max-height: 700px; overflow-y: auto;
 }
-.char-list-panel h3, .global-char-panel h3 { margin: 0 0 10px 0; font-size: 14px; }
-
-.char-item {
-  border-left: 3px solid #ccc; padding: 6px 8px; margin-bottom: 6px;
-  border-radius: 0 4px 4px 0; cursor: pointer; transition: background 0.2s;
+.global-char-panel h3 {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding-bottom: 8px;
+  z-index: 1;
 }
-.char-item:hover { background: #f5f5f5; }
-.char-item.active { background: #e6f0ff; }
 
-.char-header { display: flex; align-items: center; gap: 6px; }
-.char-id {
-  width: 28px; height: 28px; border-radius: 50%; color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: bold; flex-shrink: 0;
+.global-char-item {
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #fff;
 }
-.char-header .el-input { flex: 1; }
-
-.char-associations { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ddd; }
-.assoc-title { font-size: 12px; color: #666; margin-bottom: 4px; }
-.char-associations .el-checkbox { display: block; margin-bottom: 2px; font-size: 12px; }
-
-.global-char-item { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.global-id-tag {
-  width: 28px; height: 28px; border-radius: 50%; color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: bold; flex-shrink: 0;
+.global-char-item:hover {
+  border-color: #c0c0c0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
-.global-char-item .el-input { flex: 1; }
+.global-char-item.active {
+  border-color: #409eff;
+  background: #ecf5ff;
+  box-shadow: 0 1px 6px rgba(64, 158, 255, 0.15);
+}
+
+.global-char-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.global-char-id {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #409eff;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+.global-char-item.active .global-char-id {
+  background: #337ecc;
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.25);
+}
+
+.global-char-input {
+  width: 100%;
+}
+.global-char-input :deep(.el-input__wrapper) {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  padding: 4px 6px;
+}
+.global-char-input :deep(.el-input__inner) {
+  font-size: 13px;
+  line-height: 1.5;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+.global-char-item.active .global-char-input :deep(.el-input__wrapper) {
+  background: #fff;
+  border-color: #d9d9d9;
+}
+.global-char-item.active .global-char-input :deep(.el-input__inner) {
+  background: #fff;
+}
+.global-char-input :deep(.el-input__wrapper):focus,
+.global-char-input :deep(.el-input__wrapper.is-focus) {
+  border-color: #409eff;
+  background: #fff;
+}
+.global-char-input :deep(.el-input__inner):focus {
+  background: #fff;
+}
+
+.global-char-item--add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed #d0d0d0;
+  color: #999;
+  padding: 14px 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.global-char-item--add:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: #ecf5ff;
+}
 </style>

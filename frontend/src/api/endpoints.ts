@@ -39,6 +39,12 @@ export const ocrApi = {
   deleteBox(imgIdx: number, boxIdx: number) {
     return api.post('/ocr/delete_box', { img_idx: imgIdx, box_idx: boxIdx })
   },
+  reorder(imgIdx: number, order: number[]) {
+    return api.post('/ocr/reorder', { img_idx: imgIdx, order })
+  },
+  addBox(imgIdx: number, box: number[], text: string = '') {
+    return api.post('/ocr/add_box', { img_idx: imgIdx, box, text })
+  },
 }
 
 export const predictApi = {
@@ -68,6 +74,12 @@ export const captionApi = {
   },
   results() {
     return api.get('/caption/results')
+  },
+  updateCaption(imgIdx: number, caption: string) {
+    return api.post('/caption/update_caption', { img_idx: imgIdx, caption })
+  },
+  updatePanelScript(imgIdx: number, panelScript: string) {
+    return api.post('/caption/update_panel_script', { img_idx: imgIdx, panel_script: panelScript })
   },
 }
 
@@ -107,5 +119,11 @@ export const characterApi = {
   },
   panelCharacters(imgIdx: number) {
     return api.get(`/character/panel_characters/${imgIdx}`)
+  },
+  addToLibrary() {
+    return api.post('/character/library/add')
+  },
+  deleteFromLibrary(globalId: number) {
+    return api.delete(`/character/library/${globalId}`)
   },
 }
