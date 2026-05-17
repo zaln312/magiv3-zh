@@ -2,6 +2,7 @@ import sys
 import os
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from app.utils.state import state
 from app.services.model_manager import model_manager
 
@@ -23,16 +24,31 @@ def _serialize_results(results: list) -> list:
     return serialized
 
 
+class GroundingRunRequest(BaseModel):
+    style_prompt: str | None = None
+
+
 @router.post("/grounding/run")
-async def run_grounding():
-    if not state.captions:
-        raise HTTPException(status_code=400, detail="请先执行 Caption")
+async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
+    if not state.results:
+        raise HTTPException(status_code=400, detail="请先执行 Predict")
 
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
     try:
         from PIL import Image
-        from ocr_utils import preprocess_panel_characters, get_grounding
+        from ocr_utils import get_captions, preprocess_panel_characters, get_grounding
+
+        if not state.captions:
+            state.captions = get_captions(
+                state.img_paths,
+                state.results,
+                think=False,
+                style_prompt=req.style_prompt,
+            )
+            print(
+                f"[DEBUG] grounding/run: 自动执行 Caption 完成, {len(state.captions)} 张图片"
+            )
 
         model_manager.load()
 
@@ -72,6 +88,8 @@ async def run_grounding():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Grounding 失败: {str(e)}")
+    finally:
+        model_manager.unload()
 
     return {
         "success": True,
@@ -86,13 +104,37 @@ async def get_grounding_results():
 
     for i, (res, caps) in enumerate(zip(serialized_results, state.grounded_captions)):
         res["grounded_caption"] = "\n\n".join(caps) if caps else ""
+        res["grounded_captions_per_panel"] = caps
 
     print(f"[DEBUG] grounding/results: 返回 {len(serialized_results)} 个 results")
     for i, r in enumerate(serialized_results):
         print(f"[DEBUG]   result[{i}] keys: {list(r.keys())}")
-        print(f"[DEBUG]   result[{i}].grounded_caption 前80字: {r.get('grounded_caption', '')[:80]}...")
+        print(
+            f"[DEBUG]   result[{i}].grounded_caption 前80字: {r.get('grounded_caption', '')[:80]}..."
+        )
 
     return {
         "results": serialized_results,
         "count": len(serialized_results),
     }
+
+
+class UpdateGroundedCaptionRequest(BaseModel):
+    img_idx: int
+    panel_idx: int
+    grounded_caption: str
+
+
+@router.post("/grounding/update_caption")
+async def update_grounded_caption(data: UpdateGroundedCaptionRequest):
+    img_idx = data.img_idx
+    panel_idx = data.panel_idx
+    caption = data.grounded_caption
+
+    if img_idx < 0 or img_idx >= len(state.grounded_captions):
+        raise HTTPException(status_code=400, detail="img_idx 无效")
+    if panel_idx < 0 or panel_idx >= len(state.grounded_captions[img_idx]):
+        raise HTTPException(status_code=400, detail="panel_idx 无效")
+
+    state.grounded_captions[img_idx][panel_idx] = caption
+    return {"success": True}

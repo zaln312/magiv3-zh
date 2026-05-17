@@ -84,11 +84,14 @@ export const captionApi = {
 }
 
 export const groundingApi = {
-  run() {
-    return api.post('/grounding/run')
+  run(stylePrompt?: string) {
+    return api.post('/grounding/run', { style_prompt: stylePrompt || null })
   },
   results() {
     return api.get('/grounding/results')
+  },
+  updateCaption(imgIdx: number, panelIdx: number, groundedCaption: string) {
+    return api.post('/grounding/update_caption', { img_idx: imgIdx, panel_idx: panelIdx, grounded_caption: groundedCaption })
   },
 }
 

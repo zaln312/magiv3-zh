@@ -920,7 +920,9 @@ from PIL import Image
 from openai import OpenAI
 
 
-def _get_caption(img: Image.Image, think: bool = False):
+def _get_caption(
+    img: Image.Image, think: bool = False, style_prompt: str | None = None
+):
     """
     从单 panel 中获取描述
     """
@@ -930,6 +932,13 @@ def _get_caption(img: Image.Image, think: bool = False):
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     img_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+    base_text = "Describe this image in a single prose paragraph. For each character, start by clearly stating their relative position (e.g., 'the character on the left', 'in the foreground', 'the girl on the right'), then describe their appearance (hair, clothing), and finally their actions or emotions. Do not use specific names. Ignore all embedded text, speech bubbles, and dialogue. Focus purely on visual elements."
+
+    if style_prompt:
+        prompt_text = f"{style_prompt}\n\n{base_text}"
+    else:
+        prompt_text = base_text
 
     client = OpenAI(base_url="http://localhost:8001/v1", api_key="EMPTY")
     messages = [
@@ -942,7 +951,7 @@ def _get_caption(img: Image.Image, think: bool = False):
                 },
                 {
                     "type": "text",
-                    "text": "Describe this image in a single prose paragraph. For each character, start by clearly stating their relative position (e.g., 'the character on the left', 'in the foreground', 'the girl on the right'), then describe their appearance (hair, clothing), and finally their actions or emotions. Do not use specific names. Ignore all embedded text, speech bubbles, and dialogue. Focus purely on visual elements.",
+                    "text": prompt_text,
                 },
             ],
         }
@@ -976,18 +985,22 @@ def _get_caption(img: Image.Image, think: bool = False):
     return response.choices[0].message.content
 
 
-def get_captions(image_paths: list[str], results: list[dict], think: bool):
+def get_captions(
+    image_paths: list[str],
+    results: list[dict],
+    think: bool,
+    style_prompt: str | None = None,
+):
     assert len(image_paths) == len(results), "image_paths 和 results 长度不一致"
 
     captions_list = []
     for img_path, result in zip(image_paths, results):
-        # 对于单张 img
         captions = []
         img = Image.open(img_path)
         for idx, panel in enumerate(result["panels"]):
             img_panel = img.crop(panel)
             img_panel.save(f"output/panel{idx}.jpg")
-            caption = _get_caption(img_panel, think)
+            caption = _get_caption(img_panel, think, style_prompt)
             captions.append(caption)
         captions_list.append(captions)
     return captions_list
@@ -1165,6 +1178,7 @@ def build_panel_scripts(
     include_narrator=True,
     label="旁白",
     label_char_name="角色",
+    character_name_map=None,
 ):
     """
     为每个分镜构建剧本格式的对话串。
@@ -1174,11 +1188,16 @@ def build_panel_scripts(
         essential_only: bool，是否仅保留关键文本（is_essential_text 为 True）
         include_narrator: bool，是否保留无角色关联的文本（使用标注词 label）
         label: str，无角色关联的文本的标注词，默认 "旁白"
+        label_char_name: str，有角色关联但无角色名时的标注词，默认 "角色"
+        character_name_map: dict[int, str] | None，global_id → 角色名 的映射
 
 
     返回:
         list: 每个元素为一个分镜的对话列表，格式为 "角色 X: “对话内容”"
     """
+    if character_name_map is None:
+        character_name_map = {}
+
     panels = result_data["panels"]
     ocr_texts = result_data["ocr_texts"]
     text_panel_assoc = result_data["text_panel_associations"]
@@ -1204,16 +1223,24 @@ def build_panel_scripts(
 
         panel_script = []
         for t_idx in texts_in_panel:  # 已按阅读顺序排列
+            if t_idx >= len(ocr_texts):
+                continue
             # 筛选 essential
-            if essential_only and not is_essential[t_idx]:
+            if essential_only and t_idx < len(is_essential) and not is_essential[t_idx]:
                 continue
 
             text_content = ocr_texts[t_idx]
 
             if t_idx in text_to_char:
                 char_idx = text_to_char[t_idx]
+                if char_idx >= len(char_cluster_labels):
+                    continue
                 cluster_id = char_cluster_labels[char_idx]
-                line = f"{label_char_name} {cluster_id}: “{text_content}”"
+                char_name = character_name_map.get(cluster_id, "")
+                if char_name:
+                    line = f"{char_name}: “{text_content}”"
+                else:
+                    line = f"{label_char_name} {cluster_id}: “{text_content}”"
                 panel_script.append(line)
             elif include_narrator:
                 # 无角色关联，作为旁白处理
@@ -1532,4 +1559,6 @@ def get_prose(prose_prompt: list[str]) -> str:
             "chat_template_kwargs": {"enable_thinking": False},
         },
     )
+    if not response.choices:
+        raise RuntimeError("LLM 返回了空的 choices 列表，请检查 LLM 服务是否正常")
     return response.choices[0].message.content

@@ -4,7 +4,15 @@
       <h2>Predict 预测结果</h2>
       <div class="header-actions">
         <el-select v-model="currentImgIdx" placeholder="选择图片" style="width: 200px">
-          <el-option v-for="(_, idx) in results" :key="idx" :label="`图片 ${idx + 1}`" :value="idx" />
+          <el-option v-for="(_, idx) in results" :key="idx" :label="`图片 ${idx + 1}`" :value="idx">
+            <div
+              style="margin: -8px -20px; padding: 8px 20px;"
+              @mouseenter="onImgOptionEnter(idx, $event)"
+              @mouseleave="onPreviewLeave"
+            >
+              图片 {{ idx + 1 }}
+            </div>
+          </el-option>
         </el-select>
         <el-button v-if="selectedCharIdx !== null" type="danger" @click="deleteSelectedCharacter">
           删除人物框
@@ -12,8 +20,8 @@
         <el-button v-else @click="addCharacterMode = !addCharacterMode" :type="addCharacterMode ? 'warning' : 'default'">
           {{ addCharacterMode ? '取消添加' : '添加人物框' }}
         </el-button>
-        <el-button type="primary" @click="runCaption" :loading="captionLoading">
-          执行 Caption
+        <el-button type="primary" @click="runGrounding" :loading="groundingLoading">
+          执行 Grounding
         </el-button>
       </div>
     </div>
@@ -44,6 +52,9 @@
             <v-text v-for="(box, idx) in currentCharacters" :key="'clabel-' + idx"
               :config="getCharLabelConfig(idx, box)" />
 
+            <v-rect v-for="(box, idx) in currentTextBoxes" :key="'tbox-' + idx"
+              :config="getTextBoxConfig(idx, box)" />
+
             <template v-for="(box, idx) in currentCharacters" :key="'chandle-tl-' + idx">
               <v-circle v-if="selectedCharIdx === null && highlightedGlobalId === null" :config="getCharHandleConfig(idx, box, 'tl')" />
             </template>
@@ -51,9 +62,6 @@
             <template v-for="(box, idx) in currentCharacters" :key="'chandle-br-' + idx">
               <v-circle v-if="selectedCharIdx === null && highlightedGlobalId === null" :config="getCharHandleConfig(idx, box, 'br')" />
             </template>
-
-            <v-rect v-for="(box, idx) in currentTextBoxes" :key="'tbox-' + idx"
-              :config="getTextBoxConfig(idx, box)" />
           </v-layer>
         </v-stage>
       </div>
@@ -102,6 +110,36 @@
       </div>
     </div>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-show="previewVisible"
+      class="option-preview-float"
+      :style="previewStyle"
+    >
+      <div style="width: 220px; overflow: hidden; border-radius: 4px; line-height: 0;">
+        <img
+          :src="`/api/images/serve/${previewIdx}?t=${Date.now()}`"
+          style="width: 100%; display: block;"
+        />
+      </div>
+    </div>
+  </Teleport>
+
+  <Teleport to="body">
+    <div
+      v-show="magnifierVisible"
+      class="magnifier-float"
+      :style="magnifierStyle"
+    >
+      <canvas
+        ref="magnifierCanvasRef"
+        :width="MAGNIFIER_SIZE"
+        :height="MAGNIFIER_SIZE"
+        class="magnifier-canvas"
+      />
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -109,7 +147,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Delete, Plus } from '@element-plus/icons-vue'
-import { predictApi, captionApi, characterApi } from '../api/endpoints'
+import { predictApi, groundingApi, characterApi } from '../api/endpoints'
 
 const router = useRouter()
 
@@ -124,7 +162,7 @@ const currentImgIdx = ref(0)
 const selectedCharIdx = ref<number | null>(null)
 const highlightedGlobalId = ref<number | null>(null)
 const addCharacterMode = ref(false)
-const captionLoading = ref(false)
+const groundingLoading = ref(false)
 const charNameMap = ref<Record<number, string>>({})
 const globalCharLibrary = ref<any[]>([])
 
@@ -144,6 +182,32 @@ const scaleX = ref(1)
 const scaleY = ref(1)
 
 const charDragState = ref<{ boxIdx: number; corner: 'tl' | 'br' } | null>(null)
+
+const previewVisible = ref(false)
+const previewIdx = ref(0)
+const previewStyle = ref({ top: '0px', left: '0px' })
+let hideTimer: ReturnType<typeof setTimeout> | null = null
+
+const MAGNIFIER_SIZE = 160
+const MAGNIFIER_ZOOM = 1
+const magnifierVisible = ref(false)
+const magnifierStyle = ref({ top: '0px', left: '0px' })
+const magnifierCanvasRef = ref<HTMLCanvasElement | null>(null)
+
+function onImgOptionEnter(idx: number, e: MouseEvent) {
+  if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
+  previewIdx.value = idx
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  previewStyle.value = {
+    top: rect.top + 'px',
+    left: (rect.left - 232) + 'px',
+  }
+  previewVisible.value = true
+}
+
+function onPreviewLeave() {
+  hideTimer = setTimeout(() => { previewVisible.value = false }, 100)
+}
 
 const currentResult = computed(() => {
   if (currentImgIdx.value >= results.value.length) return {}
@@ -298,7 +362,7 @@ function getCharLabelConfig(idx: number, box: number[]) {
   }
 }
 
-const CHAR_HANDLE_RADIUS = 6
+const CHAR_HANDLE_RADIUS = 4
 
 function isCharActive(idx: number): boolean {
   if (selectedCharIdx.value === idx) return true
@@ -542,7 +606,7 @@ function handleStageMouseDown(e: any) {
   highlightedGlobalId.value = null
 }
 
-function handleStageMouseMove(_e: any) {
+function handleStageMouseMove(e: any) {
   if (!charDragState.value) return
 
   const stage = stageRef.value?.getStage()
@@ -568,6 +632,8 @@ function handleStageMouseMove(_e: any) {
   }
 
   chars.splice(boxIdx, 1, newBox)
+
+  updateMagnifier(e, imgX, imgY, corner)
 }
 
 function handleStageMouseUp(_e: any) {
@@ -581,6 +647,58 @@ function handleStageMouseUp(_e: any) {
   })
 
   charDragState.value = null
+  magnifierVisible.value = false
+}
+
+function updateMagnifier(e: any, imgX: number, imgY: number, corner: 'tl' | 'br') {
+  const canvas = magnifierCanvasRef.value
+  if (!canvas || !imageObj.value) return
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const imgW = imageObj.value.naturalWidth
+  const imgH = imageObj.value.naturalHeight
+  const halfView = (MAGNIFIER_SIZE / MAGNIFIER_ZOOM) / 2
+  const sx = Math.max(0, imgX - halfView)
+  const sy = Math.max(0, imgY - halfView)
+  const sw = Math.min(imgW - sx, halfView * 2)
+  const sh = Math.min(imgH - sy, halfView * 2)
+
+  ctx.clearRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE)
+  ctx.imageSmoothingEnabled = false
+
+  const dx = (halfView - (imgX - sx)) * MAGNIFIER_ZOOM
+  const dy = (halfView - (imgY - sy)) * MAGNIFIER_ZOOM
+  ctx.drawImage(imageObj.value, sx, sy, sw, sh, dx, dy, sw * MAGNIFIER_ZOOM, sh * MAGNIFIER_ZOOM)
+
+  const cx = MAGNIFIER_SIZE / 2
+  const cy = MAGNIFIER_SIZE / 2
+  ctx.strokeStyle = '#ff0000'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(cx, 0)
+  ctx.lineTo(cx, MAGNIFIER_SIZE)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(0, cy)
+  ctx.lineTo(MAGNIFIER_SIZE, cy)
+  ctx.stroke()
+
+  magnifierVisible.value = true
+
+  const evt = e.evt as MouseEvent
+  if (corner === 'tl') {
+    magnifierStyle.value = {
+      top: (evt.clientY - MAGNIFIER_SIZE - 16) + 'px',
+      left: (evt.clientX - MAGNIFIER_SIZE - 16) + 'px',
+    }
+  } else {
+    magnifierStyle.value = {
+      top: (evt.clientY + 16) + 'px',
+      left: (evt.clientX + 16) + 'px',
+    }
+  }
 }
 
 async function updateCharName(globalId: number, name: string) {
@@ -632,16 +750,16 @@ async function loadCharLibrary() {
   } catch {}
 }
 
-async function runCaption() {
-  captionLoading.value = true
+async function runGrounding() {
+  groundingLoading.value = true
   try {
-    await captionApi.run()
-    ElMessage.success('Caption 完成')
-    router.push('/caption')
+    await groundingApi.run()
+    ElMessage.success('Grounding 完成')
+    router.push('/grounding')
   } catch (e: any) {
-    ElMessage.error('Caption 失败: ' + (e.response?.data?.detail || e.message))
+    ElMessage.error('Grounding 失败: ' + (e.response?.data?.detail || e.message))
   } finally {
-    captionLoading.value = false
+    groundingLoading.value = false
   }
 }
 
@@ -781,5 +899,32 @@ onMounted(() => { loadResults(); loadCharLibrary() })
   border-color: #409eff;
   color: #409eff;
   background: #ecf5ff;
+}
+</style>
+
+<style>
+.option-preview-float {
+  position: fixed;
+  z-index: 10000;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  background: #fff;
+  padding: 4px;
+  pointer-events: none;
+}
+
+.magnifier-float {
+  position: fixed;
+  z-index: 10001;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  background: #fff;
+  padding: 3px;
+  pointer-events: none;
+}
+
+.magnifier-canvas {
+  display: block;
+  border-radius: 4px;
 }
 </style>

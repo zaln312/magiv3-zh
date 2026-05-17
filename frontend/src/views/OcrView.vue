@@ -9,7 +9,15 @@
             :key="idx"
             :label="`图片 ${idx + 1}`"
             :value="idx"
-          />
+          >
+            <div
+              style="margin: -8px -20px; padding: 8px 20px;"
+              @mouseenter="onImgOptionEnter(idx, $event)"
+              @mouseleave="onPreviewLeave"
+            >
+              图片 {{ idx + 1 }}
+            </div>
+          </el-option>
         </el-select>
         <el-button type="primary" @click="runPredict" :loading="predictLoading">
           执行 Predict
@@ -119,6 +127,36 @@
       </div>
     </div>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-show="previewVisible"
+      class="option-preview-float"
+      :style="previewStyle"
+    >
+      <div style="width: 220px; overflow: hidden; border-radius: 4px; line-height: 0;">
+        <img
+          :src="`/api/images/serve/${previewIdx}?t=${Date.now()}`"
+          style="width: 100%; display: block;"
+        />
+      </div>
+    </div>
+  </Teleport>
+
+  <Teleport to="body">
+    <div
+      v-show="magnifierVisible"
+      class="magnifier-float"
+      :style="magnifierStyle"
+    >
+      <canvas
+        ref="magnifierCanvasRef"
+        :width="MAGNIFIER_SIZE"
+        :height="MAGNIFIER_SIZE"
+        class="magnifier-canvas"
+      />
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -159,7 +197,33 @@ const dragState = ref<{ boxIdx: number; corner: 'tl' | 'br' } | null>(null)
 const textEntryRefs = ref<Record<number, HTMLElement>>({})
 const oldTexts = ref<string[]>([])
 
-const HANDLE_RADIUS = 6
+const previewVisible = ref(false)
+const previewIdx = ref(0)
+const previewStyle = ref({ top: '0px', left: '0px' })
+let hideTimer: ReturnType<typeof setTimeout> | null = null
+
+const MAGNIFIER_SIZE = 160
+const MAGNIFIER_ZOOM = 1
+const magnifierVisible = ref(false)
+const magnifierStyle = ref({ top: '0px', left: '0px' })
+const magnifierCanvasRef = ref<HTMLCanvasElement | null>(null)
+
+function onImgOptionEnter(idx: number, e: MouseEvent) {
+  if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
+  previewIdx.value = idx
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  previewStyle.value = {
+    top: rect.top + 'px',
+    left: (rect.left - 232) + 'px',
+  }
+  previewVisible.value = true
+}
+
+function onPreviewLeave() {
+  hideTimer = setTimeout(() => { previewVisible.value = false }, 100)
+}
+
+const HANDLE_RADIUS = 4
 
 const currentBoxes = computed(() => {
   if (currentImgIdx.value >= ocrResults.value.length) return []
@@ -329,7 +393,7 @@ function handleStageMouseDown(e: any) {
   selectedBoxIdx.value = null
 }
 
-function handleStageMouseMove(_e: any) {
+function handleStageMouseMove(e: any) {
   if (!dragState.value) return
 
   const stage = stageRef.value?.getStage()
@@ -355,6 +419,8 @@ function handleStageMouseMove(_e: any) {
   }
 
   boxes.splice(boxIdx, 1, newBox)
+
+  updateMagnifier(e, imgX, imgY, corner)
 }
 
 function handleStageMouseUp(_e: any) {
@@ -368,6 +434,56 @@ function handleStageMouseUp(_e: any) {
   })
 
   dragState.value = null
+  magnifierVisible.value = false
+}
+
+function updateMagnifier(e: any, imgX: number, imgY: number, corner: 'tl' | 'br') {
+  const canvas = magnifierCanvasRef.value
+  if (!canvas || !imageObj.value) return
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const halfView = (MAGNIFIER_SIZE / MAGNIFIER_ZOOM) / 2
+  const sx = Math.max(0, imgX - halfView)
+  const sy = Math.max(0, imgY - halfView)
+  const sw = Math.min(imageNaturalWidth.value - sx, halfView * 2)
+  const sh = Math.min(imageNaturalHeight.value - sy, halfView * 2)
+
+  ctx.clearRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE)
+  ctx.imageSmoothingEnabled = false
+
+  const dx = (halfView - (imgX - sx)) * MAGNIFIER_ZOOM
+  const dy = (halfView - (imgY - sy)) * MAGNIFIER_ZOOM
+  ctx.drawImage(imageObj.value, sx, sy, sw, sh, dx, dy, sw * MAGNIFIER_ZOOM, sh * MAGNIFIER_ZOOM)
+
+  const cx = MAGNIFIER_SIZE / 2
+  const cy = MAGNIFIER_SIZE / 2
+  ctx.strokeStyle = '#ff0000'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(cx, 0)
+  ctx.lineTo(cx, MAGNIFIER_SIZE)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(0, cy)
+  ctx.lineTo(MAGNIFIER_SIZE, cy)
+  ctx.stroke()
+
+  magnifierVisible.value = true
+
+  const evt = e.evt as MouseEvent
+  if (corner === 'tl') {
+    magnifierStyle.value = {
+      top: (evt.clientY - MAGNIFIER_SIZE - 16) + 'px',
+      left: (evt.clientX - MAGNIFIER_SIZE - 16) + 'px',
+    }
+  } else {
+    magnifierStyle.value = {
+      top: (evt.clientY + 16) + 'px',
+      left: (evt.clientX + 16) + 'px',
+    }
+  }
 }
 
 async function updateText(idx: number, text: string) {
@@ -689,5 +805,32 @@ onMounted(loadOcrResults)
 .text-entry-input :deep(.el-textarea__inner):focus {
   border-color: #409eff;
   background: #fff;
+}
+</style>
+
+<style>
+.option-preview-float {
+  position: fixed;
+  z-index: 10000;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  background: #fff;
+  padding: 4px;
+  pointer-events: none;
+}
+
+.magnifier-float {
+  position: fixed;
+  z-index: 10001;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  background: #fff;
+  padding: 3px;
+  pointer-events: none;
+}
+
+.magnifier-canvas {
+  display: block;
+  border-radius: 4px;
 }
 </style>
