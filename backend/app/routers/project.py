@@ -1,5 +1,6 @@
 import os
 import shutil
+import logging
 
 from fastapi import APIRouter, HTTPException
 from app.utils.state import state
@@ -15,6 +16,8 @@ from app.services.database import (
 from app.services.model_manager import model_manager
 from app.services.app_config import get_magi_v3_mode
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -25,7 +28,7 @@ def _enter_project(project_id: str):
     if mode == "persistent_project":
         model_manager.set_persistent_mode(True)
         model_manager.maybe_load()
-        print(f"[MagiV3] Persistent mode: model loaded for project {project_id}")
+        logger.info(f"Persistent mode: model loaded for project {project_id}")
     else:
         model_manager.set_persistent_mode(False)
 
@@ -34,7 +37,7 @@ def _exit_project():
     """Common exit logic: unload magi v3 if persistent, reset state."""
     if model_manager.persistent_mode and model_manager.is_loaded:
         model_manager.unload()
-        print("[MagiV3] Persistent mode: model unloaded on project exit")
+        logger.info("Persistent mode: model unloaded on project exit")
     model_manager.set_persistent_mode(False)
     state._project_id = None
     state.reset_pipeline()
@@ -133,13 +136,13 @@ async def api_apply_magi_mode():
         if not model_manager.is_loaded:
             model_manager.set_persistent_mode(True)
             model_manager.maybe_load()
-            print("[MagiV3] Persistent mode activated: model loaded")
+            logger.info("Persistent mode activated: model loaded")
         else:
             model_manager.set_persistent_mode(True)
     else:
         if model_manager.persistent_mode and model_manager.is_loaded:
             model_manager.unload()
-            print("[MagiV3] Dynamic mode activated: model unloaded")
+            logger.info("Dynamic mode activated: model unloaded")
         model_manager.set_persistent_mode(False)
 
     return {"success": True, "mode": mode, "model_loaded": model_manager.is_loaded}

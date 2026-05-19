@@ -132,6 +132,13 @@ def init_db():
         )
     except Exception:
         pass
+
+    try:
+        conn.execute(
+            "ALTER TABLE project_global_characters ADD COLUMN features TEXT NOT NULL DEFAULT ''"
+        )
+    except Exception:
+        pass
     conn.commit()
 
     conn.close()
@@ -361,9 +368,16 @@ def save_global_characters(
     for entry in character_library:
         gid = entry["global_id"]
         name = name_map.get(gid, "")
+        features = entry.get("features")
+        if features is not None and hasattr(features, "tolist"):
+            features = _json_dumps(features.tolist())
+        elif features is not None and isinstance(features, list):
+            features = _json_dumps(features)
+        else:
+            features = ""
         conn.execute(
-            "INSERT INTO project_global_characters (project_id, global_id, name) VALUES (?, ?, ?)",
-            (project_id, gid, name),
+            "INSERT INTO project_global_characters (project_id, global_id, name, features) VALUES (?, ?, ?, ?)",
+            (project_id, gid, name, features),
         )
     conn.commit()
     conn.close()
@@ -376,7 +390,13 @@ def load_global_characters(project_id: str) -> tuple[list[dict], dict[int, str]]
         (project_id,),
     ).fetchall()
     conn.close()
-    library = [{"global_id": r["global_id"]} for r in rows]
+    library = []
+    for r in rows:
+        entry = {"global_id": r["global_id"]}
+        features_str = r["features"] if "features" in r.keys() else ""
+        if features_str:
+            entry["features"] = _json_loads(features_str)
+        library.append(entry)
     name_map = {r["global_id"]: r["name"] for r in rows}
     return library, name_map
 

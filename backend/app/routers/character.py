@@ -7,16 +7,9 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from PIL import Image
 from app.config import UPLOAD_DIR
 from app.utils.state import state
+from app.utils.image_utils import design_dir
 
 router = APIRouter()
-
-
-def _design_dir(global_id: int) -> str:
-    d = os.path.join(
-        UPLOAD_DIR, "design", state.project_id or "default", str(global_id)
-    )
-    os.makedirs(d, exist_ok=True)
-    return d
 
 
 @router.get("/character/library")
@@ -67,10 +60,7 @@ async def get_panel_characters(img_idx: int):
     if img_idx < 0 or img_idx >= len(state.results):
         raise HTTPException(status_code=400, detail="img_idx 无效")
 
-    import sys
-
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-    from ocr_utils import preprocess_panel_characters
+    from app.utils.ocr_utils import preprocess_panel_characters
 
     panel_chars = preprocess_panel_characters(state.results[img_idx])
     return {"panel_characters": panel_chars}
@@ -110,7 +100,7 @@ async def delete_character_from_library(global_id: int):
 
 @router.get("/character/{global_id}/design_images")
 async def get_design_images(global_id: int):
-    d = _design_dir(global_id)
+    d = design_dir(global_id)
     images = []
     if not os.path.isdir(d):
         return {"success": True, "global_id": global_id, "images": images}
@@ -134,7 +124,7 @@ async def get_design_images(global_id: int):
 
 @router.post("/character/{global_id}/design_upload")
 async def upload_design_image(global_id: int, file: UploadFile = File(...)):
-    d = _design_dir(global_id)
+    d = design_dir(global_id)
     ext = os.path.splitext(file.filename or "design.jpg")[1] or ".jpg"
     filename = f"{uuid.uuid4().hex}{ext}"
     filepath = os.path.join(d, filename)
@@ -146,7 +136,7 @@ async def upload_design_image(global_id: int, file: UploadFile = File(...)):
 
 @router.delete("/character/{global_id}/design_image/{filename}")
 async def delete_design_image(global_id: int, filename: str):
-    d = _design_dir(global_id)
+    d = design_dir(global_id)
     filepath = os.path.join(d, filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="文件不存在")

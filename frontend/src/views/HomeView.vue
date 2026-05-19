@@ -37,6 +37,7 @@
           <div class="card-name">{{ p.name || '未命名项目' }}</div>
           <div class="card-meta">
             <el-tag
+              v-if="!(p.current_step === 'video' && p.video_task_state && p.video_task_state !== 'success' && p.video_task_state !== 'failed')"
               :type="stepTagType(p.current_step)"
               size="small"
             >

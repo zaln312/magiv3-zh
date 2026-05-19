@@ -16,16 +16,19 @@ Fake Video Server: 模拟 Vidu Q3 视频生成 API（异步任务模式）
 import json
 import time
 import base64
-import io
+import os
 import uuid
 import sys
+import random
 import threading
 from datetime import datetime
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
-from PIL import Image, ImageDraw
+
+VIDEO_DIR = "/media/zaln/2EC07C08C07BD495/Videos/Jessie Morrell - beatlez"
+VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".webm", ".gif"}
 
 app = FastAPI(title="Fake Video Server", version="2.0.0")
 
@@ -55,53 +58,26 @@ def fmt_json(obj, max_str_len: int = 200) -> str:
     return "\n".join(result)
 
 
-def generate_fake_gif(
-    width: int = 640, height: int = 360, num_frames: int = 24, fps: int = 8
-) -> str:
-    frames: list[Image.Image] = []
-    colors = [
-        (40, 40, 80),
-        (80, 40, 40),
-        (40, 80, 40),
-        (80, 80, 40),
-        (40, 80, 80),
-        (80, 40, 80),
-    ]
+def _list_videos():
+    if not os.path.isdir(VIDEO_DIR):
+        return []
+    files = []
+    for f in os.listdir(VIDEO_DIR):
+        ext = os.path.splitext(f)[1].lower()
+        if ext in VIDEO_EXTS:
+            files.append(os.path.join(VIDEO_DIR, f))
+    return files
 
-    for i in range(num_frames):
-        color = colors[i % len(colors)]
-        img = Image.new("RGB", (width, height), color=color)
-        draw = ImageDraw.Draw(img)
 
-        draw.text((20, 20), "[Fake Video - Vidu Style]", fill=(255, 255, 255))
-        draw.text((20, 50), f"Frame {i + 1}/{num_frames}", fill=(255, 255, 255))
-        draw.text((20, 80), f"{fps}fps  {width}x{height}", fill=(200, 200, 200))
-        draw.text(
-            (20, height - 30),
-            f"Task Mode  {datetime.now().strftime('%H:%M:%S')}",
-            fill=(180, 180, 180),
-        )
-
-        square_x = int((i / max(num_frames - 1, 1)) * (width - 100)) + 50
-        draw.rectangle(
-            [square_x - 30, height // 2 - 30, square_x + 30, height // 2 + 30],
-            fill=(255, 100, 100),
-            outline=(255, 255, 255),
-            width=2,
-        )
-
-        frames.append(img)
-
-    buf = io.BytesIO()
-    frames[0].save(
-        buf,
-        format="GIF",
-        save_all=True,
-        append_images=frames[1:],
-        duration=int(1000 / fps),
-        loop=0,
-    )
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+def _pick_random_video_b64() -> str:
+    videos = _list_videos()
+    if not videos:
+        print("[警告] 视频目录无可用文件")
+        return ""
+    chosen = random.choice(videos)
+    print(f"[随机选取] 视频: {os.path.basename(chosen)}")
+    with open(chosen, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
 
 def _advance_task(task_id: str):
@@ -115,11 +91,11 @@ def _advance_task(task_id: str):
 
     with tasks_lock:
         if task_id in tasks:
-            gif_b64 = generate_fake_gif()
+            video_b64 = _pick_random_video_b64()
             tasks[task_id]["creations"] = [
                 {
                     "id": f"cre_{task_id[:8]}",
-                    "url": f"data:video/mp4;base64,{gif_b64}",
+                    "url": f"data:video/mp4;base64,{video_b64}",
                     "cover_url": "",
                 }
             ]
@@ -206,15 +182,13 @@ async def chat_completions(request: Request):
     video_params = extra_body.get("video", {})
     width = video_params.get("width", 1024)
     height = video_params.get("height", 576)
-    num_frames = video_params.get("num_frames", 48)
-    fps = video_params.get("fps", 8)
 
     print(
         f"\n[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] === OpenAI Compat: 收到请求 ==="
     )
-    print(f"  model={model}, {width}x{height}, {num_frames}frames, {fps}fps")
+    print(f"  model={model}, {width}x{height}")
 
-    video_b64 = generate_fake_gif(width, height, num_frames, fps)
+    video_b64 = _pick_random_video_b64()
 
     response = {
         "id": f"chatcmpl-fake-{int(time.time()*1000)}",
@@ -226,15 +200,13 @@ async def chat_completions(request: Request):
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": f"[Fake Video] {num_frames}-frame, {width}x{height}",
+                    "content": f"[Video] {width}x{height}",
                     "video": {
                         "data": video_b64,
                         "video_base64": video_b64,
-                        "format": "gif",
+                        "format": "mp4",
                         "width": width,
                         "height": height,
-                        "num_frames": num_frames,
-                        "fps": fps,
                     },
                 },
                 "finish_reason": "stop",

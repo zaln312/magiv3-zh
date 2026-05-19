@@ -1,10 +1,12 @@
-import sys
-import os
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.utils.state import state
+from app.utils.serialization import serialize_results
 from app.services.app_config import get_caption_openai_config
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -14,28 +16,12 @@ class CaptionRunRequest(BaseModel):
     style_prompt: str | None = None
 
 
-def _serialize_results(results: list) -> list:
-    serialized = []
-    for r in results:
-        s = {}
-        for k, v in r.items():
-            if hasattr(v, "tolist"):
-                s[k] = v.tolist()
-            elif isinstance(v, list):
-                s[k] = [x.tolist() if hasattr(x, "tolist") else x for x in v]
-            else:
-                s[k] = v
-        serialized.append(s)
-    return serialized
-
-
 @router.post("/caption/run")
 async def run_caption(req: CaptionRunRequest = CaptionRunRequest()):
     if not state.results:
         raise HTTPException(status_code=400, detail="请先执行 Predict")
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-    from ocr_utils import get_captions
+    from app.utils.ocr_utils import get_captions
 
     caption_cfg = get_caption_openai_config()
 
@@ -47,13 +33,13 @@ async def run_caption(req: CaptionRunRequest = CaptionRunRequest()):
             style_prompt=req.style_prompt,
             caption_config=caption_cfg,
         )
-        print(
-            f"[DEBUG] caption/run: state.captions 类型={type(state.captions)}, 长度={len(state.captions)}"
+        logger.debug(
+            f"caption/run: state.captions 类型={type(state.captions)}, 长度={len(state.captions)}"
         )
         for i, caps in enumerate(state.captions):
-            print(f"[DEBUG]   img[{i}]: {len(caps)} 个 panel captions")
+            logger.debug(f"  img[{i}]: {len(caps)} 个 panel captions")
             for j, c in enumerate(caps):
-                print(f"[DEBUG]     panel[{j}]: {c[:80]}...")
+                logger.debug(f"    panel[{j}]: {c[:80]}...")
 
         state.persist_step("caption")
         state.persist_captions()
@@ -69,7 +55,7 @@ async def run_caption(req: CaptionRunRequest = CaptionRunRequest()):
 
 @router.get("/caption/results")
 async def get_caption_results():
-    serialized_results = _serialize_results(state.results)
+    serialized_results = serialize_results(state.results)
 
     for i, (res, caps) in enumerate(zip(serialized_results, state.captions)):
         res["caption"] = "\n\n".join(caps) if caps else ""
@@ -83,12 +69,12 @@ async def get_caption_results():
                 flat_scripts.extend(panel_lines)
             res["panel_script"] = "\n".join(flat_scripts) if flat_scripts else ""
 
-    print(f"[DEBUG] caption/results: 返回 {len(serialized_results)} 个 results")
+    logger.debug(f"caption/results: 返回 {len(serialized_results)} 个 results")
     for i, r in enumerate(serialized_results):
-        print(f"[DEBUG]   result[{i}] keys: {list(r.keys())}")
-        print(f"[DEBUG]   result[{i}].caption 前80字: {r.get('caption', '')[:80]}...")
-        print(
-            f"[DEBUG]   result[{i}].panel_script 前80字: {r.get('panel_script', '')[:80]}..."
+        logger.debug(f"  result[{i}] keys: {list(r.keys())}")
+        logger.debug(f"  result[{i}].caption 前80字: {r.get('caption', '')[:80]}...")
+        logger.debug(
+            f"  result[{i}].panel_script 前80字: {r.get('panel_script', '')[:80]}..."
         )
 
     return {
@@ -109,7 +95,7 @@ async def update_caption(data: dict):
 
     state.captions[img_idx] = [caption]
     state.persist_captions()
-    print(f"[DEBUG] caption/update_caption: img[{img_idx}] 更新为: {caption[:80]}...")
+    logger.debug(f"caption/update_caption: img[{img_idx}] 更新为: {caption[:80]}...")
     return {"success": True}
 
 
@@ -130,7 +116,7 @@ async def update_panel_script(data: dict):
 
     state.panel_scripts[img_idx] = [panel_script]
     state.persist_panel_scripts()
-    print(
-        f"[DEBUG] caption/update_panel_script: img[{img_idx}] 更新为: {panel_script[:80]}..."
+    logger.debug(
+        f"caption/update_panel_script: img[{img_idx}] 更新为: {panel_script[:80]}..."
     )
     return {"success": True}

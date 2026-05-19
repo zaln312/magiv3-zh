@@ -2,6 +2,14 @@
   <div class="character-ref-page">
     <div class="page-header">
       <h2>人物参考图</h2>
+      <el-button
+        type="primary"
+        size="small"
+        :loading="generatingAll"
+        @click="generateAll"
+      >
+        全部生成
+      </el-button>
     </div>
 
     <div v-if="characters.length === 0" class="empty-state">
@@ -9,25 +17,6 @@
     </div>
 
     <div v-else class="reference-workspace">
-      <div class="ref-toolbar">
-        <span class="ref-title">参考图生成</span>
-
-        <el-checkbox-group v-model="globalViews" size="small" class="view-checkboxes">
-          <el-checkbox label="front">正面</el-checkbox>
-          <el-checkbox label="back">反面</el-checkbox>
-          <el-checkbox label="side">侧面</el-checkbox>
-        </el-checkbox-group>
-
-        <el-button
-          type="primary"
-          size="small"
-          :loading="generatingAll"
-          @click="generateAll"
-        >
-          全部生成
-        </el-button>
-      </div>
-
       <div class="ref-char-list">
         <div
           v-for="char in characters"
@@ -36,33 +25,41 @@
         >
           <div class="char-row-header">
             <span class="char-row-gid">ID: {{ char.global_id }}</span>
-            <el-input
-              v-model="char.name"
+            <span class="char-row-name-display">{{ char.name || '未命名' }}</span>
+            <el-button
+              class="char-gen-btn"
               size="small"
-              placeholder="角色名"
-              class="char-row-name"
-              @blur="onNameBlur(char)"
-              @keyup.enter="($event.target as HTMLElement).blur()"
-            />
+              type="primary"
+              :loading="char.generating"
+              @click="generateOne(char)"
+            >
+              生成
+            </el-button>
           </div>
 
           <div class="char-row-body">
+            <div class="char-crops-grid">
               <div class="char-crops-section">
                 <div class="crops-label">上传参考图</div>
                 <div class="uploaded-refs">
                   <div
-                    v-for="(img, idx) in char.uploadedRefImages"
+                    v-for="img in char.uploadedRefImages"
                     :key="img.filename"
                     class="uploaded-ref-item"
                   >
                     <div class="crop-thumb-wrapper">
-                      <img
-                        :src="'data:image/png;base64,' + img.image_base64"
+                      <el-image
+                        :src="base64Src(img.image_base64)"
+                        :preview-src-list="uploadedPreviewList(char)"
+                        :initial-index="uploadedPreviewIndex(char, img.filename)"
                         class="crop-thumb"
+                        fit="cover"
+                        preview-teleported
+                        hide-on-click-modal
                       />
                       <div
                         class="crop-remove-btn"
-                        @click="removeUploadedRef(char, img.filename)"
+                        @click.stop="removeUploadedRef(char, img.filename)"
                         title="删除此图片"
                       >
                         <span class="remove-icon">x</span>
@@ -98,16 +95,21 @@
                     class="selected-crop-item"
                   >
                     <div v-if="char.cropImages[cropKey]" class="crop-thumb-wrapper">
-                      <img
-                        :src="'data:image/png;base64,' + char.cropImages[cropKey]"
+                      <el-image
+                        :src="base64Src(char.cropImages[cropKey])"
+                        :preview-src-list="selectedCropPreviewList(char)"
+                        :initial-index="selectedCropPreviewIndex(char, cropKey)"
                         class="crop-thumb"
+                        fit="cover"
+                        preview-teleported
+                        hide-on-click-modal
                       />
                       <div
-                        class="crop-remove-btn"
-                        @click="removeCrop(char, cropKey)"
-                        title="移除此图片"
+                        class="crop-deselect-btn"
+                        @click.stop="removeCrop(char, cropKey)"
+                        title="移回推荐列表"
                       >
-                        <span class="remove-icon">x</span>
+                        <span class="deselect-icon">−</span>
                       </div>
                     </div>
                     <div v-else class="crop-thumb-loading">
@@ -127,53 +129,57 @@
                     v-for="cropMeta in availableCrops(char)"
                     :key="cropMeta.crop_key"
                     class="available-crop-item"
-                    @click="addCrop(char, cropMeta)"
-                    title="添加此图片"
                   >
                     <div v-if="char.cropImages[cropMeta.crop_key]" class="crop-thumb-wrapper">
-                      <img
-                        :src="'data:image/png;base64,' + char.cropImages[cropMeta.crop_key]"
-                        class="crop-thumb crop-thumb--candidate"
+                      <el-image
+                        :src="base64Src(char.cropImages[cropMeta.crop_key])"
+                        :preview-src-list="availableCropPreviewList(char)"
+                        :initial-index="availableCropPreviewIndex(char, cropMeta.crop_key)"
+                        class="crop-thumb"
+                        fit="cover"
+                        preview-teleported
+                        hide-on-click-modal
                       />
-                      <div class="crop-add-overlay">
+                      <div
+                        class="crop-add-btn"
+                        title="添加此图片"
+                        @click.stop="addCrop(char, cropMeta)"
+                      >
                         <span class="add-icon">+</span>
                       </div>
                     </div>
                     <div v-else class="crop-thumb-loading crop-thumb-loading--small">
                       <el-icon class="is-loading"><Loading /></el-icon>
                     </div>
-                    <div class="crop-priority-badge">{{ cropMeta.rank }}</div>
                   </div>
                 </div>
               </div>
 
-              <div class="char-gen-section">
-                <div class="gen-controls">
-                  <el-checkbox-group v-model="char.selectedViews" size="small" class="view-checkboxes">
-                    <el-checkbox label="front">正</el-checkbox>
-                    <el-checkbox label="back">反</el-checkbox>
-                    <el-checkbox label="side">侧</el-checkbox>
-                  </el-checkbox-group>
-                  <el-button
-                    size="small"
-                    type="primary"
-                    :loading="char.generating"
-                    @click="generateOne(char)"
-                  >
-                    生成
-                  </el-button>
-                </div>
+              </div>
 
+              <div class="char-gen-section">
                 <div v-if="char.refImages.length > 0" class="ref-results-gallery">
                   <div
                     v-for="(ref, idx) in char.refImages"
                     :key="idx"
                     class="ref-result-item"
                   >
-                    <img
-                      :src="'data:image/png;base64,' + ref.image_base64"
+                    <el-image
+                      :src="base64Src(ref.image_base64)"
+                      :preview-src-list="refPreviewList(char)"
+                      :initial-index="idx"
                       class="ref-img-inline"
+                      fit="cover"
+                      preview-teleported
+                      hide-on-click-modal
                     />
+                    <div
+                      class="crop-remove-btn"
+                      @click.stop="removeRefImage(char, idx)"
+                      title="删除此参考图"
+                    >
+                      <span class="remove-icon">x</span>
+                    </div>
                     <div class="ref-mode-tag-inline">{{ viewLabel(ref.view || ref.mode || '') }}</div>
                   </div>
                 </div>
@@ -181,10 +187,6 @@
                   <el-button size="small" type="danger" text @click="clearRefImages(char)">
                     一键清空
                   </el-button>
-                </div>
-                <div v-else-if="char.generating" class="ref-generating-inline">
-                  <el-icon class="is-loading"><Loading /></el-icon>
-                  <span>生成中...</span>
                 </div>
               </div>
             </div>
@@ -210,7 +212,6 @@ import { proseApi, characterApi } from '../api/endpoints'
 const router = useRouter()
 
 const generatingAll = ref(false)
-const globalViews = ref<string[]>(['front', 'back', 'side'])
 
 interface CropMeta {
   crop_key: string
@@ -242,7 +243,6 @@ interface CharacterEntry {
   selectedCropKeys: string[]
   cropImages: Record<string, string>
   refImages: RefImage[]
-  selectedViews: string[]
   uploadedRefImages: DesignImage[]
 }
 
@@ -256,6 +256,44 @@ const VIEW_LABELS: Record<string, string> = {
 
 function viewLabel(v: string) {
   return VIEW_LABELS[v] || v
+}
+
+function base64Src(b64: string) {
+  return b64 ? `data:image/png;base64,${b64}` : ''
+}
+
+function uploadedPreviewList(char: CharacterEntry) {
+  return char.uploadedRefImages.map((img) => base64Src(img.image_base64)).filter(Boolean)
+}
+
+function uploadedPreviewIndex(char: CharacterEntry, filename: string) {
+  return char.uploadedRefImages.findIndex((img) => img.filename === filename)
+}
+
+function selectedCropPreviewList(char: CharacterEntry) {
+  return char.selectedCropKeys
+    .filter((key) => char.cropImages[key])
+    .map((key) => base64Src(char.cropImages[key]))
+}
+
+function selectedCropPreviewIndex(char: CharacterEntry, cropKey: string) {
+  const keys = char.selectedCropKeys.filter((key) => char.cropImages[key])
+  return keys.indexOf(cropKey)
+}
+
+function availableCropPreviewList(char: CharacterEntry) {
+  return availableCrops(char)
+    .map((c) => base64Src(char.cropImages[c.crop_key] || ''))
+    .filter(Boolean)
+}
+
+function availableCropPreviewIndex(char: CharacterEntry, cropKey: string) {
+  const crops = availableCrops(char).filter((c) => char.cropImages[c.crop_key])
+  return crops.findIndex((c) => c.crop_key === cropKey)
+}
+
+function refPreviewList(char: CharacterEntry) {
+  return char.refImages.map((ref) => base64Src(ref.image_base64)).filter(Boolean)
 }
 
 async function loadCharacters() {
@@ -287,7 +325,6 @@ async function loadCharacters() {
         selectedCropKeys: [],
         cropImages: {},
         refImages: refs,
-        selectedViews: ['front', 'back', 'side'],
         uploadedRefImages: [],
       } as CharacterEntry
     })
@@ -347,25 +384,14 @@ function removeCrop(char: CharacterEntry, cropKey: string) {
   char.selectedCropKeys = char.selectedCropKeys.filter((k) => k !== cropKey)
 }
 
-async function onNameBlur(char: CharacterEntry) {
-  try {
-    await characterApi.updateName(char.global_id, char.name)
-  } catch {
-    ElMessage.error('角色名更新失败')
-  }
-}
-
 async function generateOne(char: CharacterEntry) {
-  if (char.selectedViews.length === 0) {
-    ElMessage.warning('请至少选择一个视图（正/反/侧）')
-    return
-  }
   char.generating = true
   try {
+    const views = ['front', 'back', 'side']
     const designFilenames = char.uploadedRefImages.map((img) => img.filename)
     const res = await proseApi.generateReferences(
       char.global_id,
-      char.selectedViews,
+      views,
       char.selectedCropKeys,
       1,
       designFilenames,
@@ -378,9 +404,8 @@ async function generateOne(char: CharacterEntry) {
         prompt: r.prompt || '',
       })
     }
-    const viewsStr = char.selectedViews.map(v => viewLabel(v)).join('/')
     ElMessage.success(
-      `角色 "${char.name || 'ID:' + char.global_id}" ${viewsStr}视图生成完成 (${results.length}张)`
+      `角色 "${char.name || 'ID:' + char.global_id}" 参考图生成完成 (${results.length}张)`
     )
   } catch (e: any) {
     ElMessage.error('生成失败: ' + (e.response?.data?.detail || e.message))
@@ -390,13 +415,8 @@ async function generateOne(char: CharacterEntry) {
 }
 
 async function generateAll() {
-  if (globalViews.value.length === 0) {
-    ElMessage.warning('请至少选择一个视图（正/反/侧）')
-    return
-  }
   generatingAll.value = true
   for (const char of characters.value) {
-    char.selectedViews = [...globalViews.value]
     await generateOne(char)
   }
   generatingAll.value = false
@@ -405,6 +425,10 @@ async function generateAll() {
 
 function clearRefImages(char: CharacterEntry) {
   char.refImages = []
+}
+
+function removeRefImage(char: CharacterEntry, idx: number) {
+  char.refImages.splice(idx, 1)
 }
 
 async function loadUploadedRefs(char: CharacterEntry) {
@@ -465,33 +489,10 @@ onMounted(() => {
 .page-header h2 {
   margin: 0;
   font-size: 24px;
+  margin-right: auto;
 }
 .empty-state {
   margin-top: 60px;
-}
-
-.reference-workspace {}
-
-.ref-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 20px;
-  padding: 10px 16px;
-  background: #f5f7fa;
-  border-radius: 8px;
-  flex-wrap: wrap;
-}
-.ref-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #303133;
-  margin-right: auto;
-}
-
-.view-checkboxes {
-  display: flex;
-  gap: 0;
 }
 
 .ref-char-list {
@@ -526,8 +527,18 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.char-row-name {
-  width: 180px;
+.char-row-name-display {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.char-gen-btn {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .char-row-body {
@@ -536,8 +547,14 @@ onMounted(() => {
   align-items: flex-start;
 }
 
-.char-crops-section {
+.char-crops-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
   flex: 1;
+}
+
+.char-crops-section {
   min-width: 0;
 }
 
@@ -547,12 +564,6 @@ onMounted(() => {
   gap: 8px;
   flex-shrink: 0;
   align-items: flex-start;
-}
-
-.gen-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .crops-label {
@@ -580,14 +591,6 @@ onMounted(() => {
   background: #fafafa;
 }
 
-.available-crop-item {
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-.available-crop-item:hover {
-  border-color: #409eff;
-}
-
 .crop-thumb-wrapper {
   width: 100%;
   height: 100%;
@@ -597,11 +600,18 @@ onMounted(() => {
 .crop-thumb {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  display: block;
 }
 
-.crop-thumb--candidate {
-  filter: brightness(0.95);
+.crop-thumb-wrapper :deep(.el-image__inner) {
+  width: 100%;
+  height: 100%;
+}
+
+.crop-remove-btn,
+.crop-deselect-btn,
+.crop-add-btn {
+  z-index: 1;
 }
 
 .crop-remove-btn {
@@ -630,41 +640,56 @@ onMounted(() => {
   font-weight: 700;
 }
 
-.crop-add-overlay {
+.crop-deselect-btn {
   position: absolute;
   top: 0;
-  left: 0;
   right: 0;
-  bottom: 0;
-  background: rgba(64, 158, 255, 0.15);
+  width: 18px;
+  height: 18px;
+  background: rgba(64, 158, 255, 0.9);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  border-radius: 0 0 0 4px;
   opacity: 0;
   transition: opacity 0.15s;
 }
-.available-crop-item:hover .crop-add-overlay {
+.crop-thumb-wrapper:hover .crop-deselect-btn {
+  opacity: 1;
+}
+
+.deselect-icon {
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.crop-add-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  background: rgba(64, 158, 255, 0.9);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 0 0 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+}
+.crop-thumb-wrapper:hover .crop-add-btn {
   opacity: 1;
 }
 
 .add-icon {
-  font-size: 24px;
-  color: #409eff;
-  font-weight: 700;
+  font-size: 13px;
   line-height: 1;
-}
-
-.crop-priority-badge {
-  position: absolute;
-  top: 0;
-  left: 0;
-  background: rgba(64, 158, 255, 0.85);
-  color: #fff;
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 0 0 4px 0;
-  font-weight: 600;
-  line-height: 1.4;
+  font-weight: 700;
 }
 
 .crop-thumb-loading {
@@ -718,17 +743,18 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: border-color 0.2s;
+  transition: background 0.15s;
   background: #fafafa;
 }
 .upload-ref-dashed-box:hover {
-  border-color: #409eff;
+  background: #f0f2f5;
 }
 
 .upload-plus {
-  font-size: 28px;
-  color: #c0c4cc;
-  font-weight: 300;
+  font-size: 24px;
+  color: #409eff;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .ref-results-gallery {
@@ -741,13 +767,22 @@ onMounted(() => {
   position: relative;
   flex-shrink: 0;
 }
+.ref-result-item:hover .crop-remove-btn {
+  opacity: 1;
+}
 
 .ref-img-inline {
   width: 80px;
   height: 80px;
-  object-fit: cover;
+  display: block;
   border-radius: 4px;
   border: 1px solid #ebeef5;
+}
+
+.ref-img-inline :deep(.el-image__inner) {
+  width: 80px;
+  height: 80px;
+  border-radius: 4px;
 }
 
 .ref-mode-tag-inline {
@@ -759,17 +794,6 @@ onMounted(() => {
   font-size: 9px;
   padding: 1px 5px;
   border-radius: 3px;
-}
-
-.ref-generating-inline {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #409eff;
-  font-size: 13px;
-  padding: 8px 14px;
-  background: #ecf5ff;
-  border-radius: 4px;
 }
 
 .ref-clear-row {

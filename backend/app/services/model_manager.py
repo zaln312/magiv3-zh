@@ -1,7 +1,7 @@
-import sys
 import os
+import logging
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+logger = logging.getLogger(__name__)
 
 
 class ModelManager:
@@ -52,7 +52,7 @@ class ModelManager:
         self._processor = AutoProcessor.from_pretrained(
             model_path, trust_remote_code=True
         )
-        print("[MagiV3] Model loaded")
+        logger.info("Model loaded")
 
     def unload(self):
         if self._model is None:
@@ -65,7 +65,7 @@ class ModelManager:
         self._model = None
         self._processor = None
         torch.cuda.empty_cache()
-        print("[MagiV3] Model unloaded")
+        logger.info("Model unloaded")
 
     def maybe_load(self):
         """Load if not loaded (used by all operations)."""

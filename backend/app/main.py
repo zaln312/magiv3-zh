@@ -11,8 +11,8 @@ from app.routers import (
     character,
     project,
     video,
+    config_router,
 )
-from app.routers.config_router import router as config_router
 from app.services.database import init_db
 
 init_db()
@@ -36,7 +36,7 @@ app.include_router(grounding.router, prefix="/api", tags=["grounding"])
 app.include_router(prose.router, prefix="/api", tags=["prose"])
 app.include_router(character.router, prefix="/api", tags=["character"])
 app.include_router(video.router, prefix="/api", tags=["video"])
-app.include_router(config_router, prefix="/api", tags=["config"])
+app.include_router(config_router.router, prefix="/api", tags=["config"])
 
 
 @app.get("/api/health")

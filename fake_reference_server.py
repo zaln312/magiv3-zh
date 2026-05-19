@@ -10,13 +10,18 @@ import json
 import time
 import base64
 import io
+import os
 import sys
+import random
+import mimetypes
 from datetime import datetime
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
-from PIL import Image, ImageDraw, ImageFont
+
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
 
 app = FastAPI(title="Fake Reference Image Server", version="1.0.0")
 
@@ -36,17 +41,20 @@ def fmt_json(obj, max_str_len: int = 200) -> str:
     return "\n".join(result)
 
 
-def _wrap_text(text: str, max_chars: int) -> list[str]:
-    lines = []
-    while len(text) > max_chars:
-        split_at = text.rfind(" ", 0, max_chars)
-        if split_at == -1:
-            split_at = max_chars
-        lines.append(text[:split_at])
-        text = text[split_at:].lstrip()
-    if text:
-        lines.append(text)
-    return lines
+def _list_images():
+    if not os.path.isdir(OUTPUT_DIR):
+        return []
+    files = []
+    for f in os.listdir(OUTPUT_DIR):
+        ext = os.path.splitext(f)[1].lower()
+        if ext in SUPPORTED_EXTS:
+            files.append(os.path.join(OUTPUT_DIR, f))
+    return files
+
+
+def _read_as_base64(filepath: str) -> str:
+    with open(filepath, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
 
 def extract_image_info(image_data_b64: str) -> dict:
@@ -62,67 +70,7 @@ def extract_image_info(image_data_b64: str) -> dict:
     return info
 
 
-def generate_fake_reference_image(prompt: str, width: int, height: int) -> str:
-    """生成一张假的参考图（纯色+人物轮廓+文字标注，返回 base64 PNG）"""
-    img = Image.new("RGB", (width, height), color=(220, 230, 240))
-    draw = ImageDraw.Draw(img)
 
-    # 绘制简单的人物轮廓示意
-    cx, cy = width // 2, height // 2
-    head_r = min(width, height) // 8
-
-    # 头部
-    draw.ellipse(
-        [
-            cx - head_r,
-            cy - height // 3 - head_r,
-            cx + head_r,
-            cy - height // 3 + head_r,
-        ],
-        fill=(255, 220, 200),
-        outline=(100, 80, 60),
-        width=2,
-    )
-    # 身体
-    body_top = cy - height // 3 + head_r
-    body_bottom = cy + height // 4
-    draw.rectangle(
-        [cx - head_r, body_top, cx + head_r, body_bottom],
-        fill=(100, 150, 200),
-        outline=(60, 100, 140),
-        width=2,
-    )
-    # 腿
-    draw.rectangle(
-        [cx - head_r // 2, body_bottom, cx, body_bottom + height // 5],
-        fill=(60, 60, 80),
-        outline=(40, 40, 60),
-        width=2,
-    )
-    draw.rectangle(
-        [cx, body_bottom, cx + head_r // 2, body_bottom + height // 5],
-        fill=(60, 60, 80),
-        outline=(40, 40, 60),
-        width=2,
-    )
-
-    # 文字标注
-    try:
-        font = ImageFont.load_default()
-    except Exception:
-        font = None
-
-    label = prompt[:80] + "..." if len(prompt) > 80 else prompt
-    draw.text((10, 10), "[Fake Reference Image]", fill=(0, 0, 0), font=font)
-    for i, line in enumerate(_wrap_text(label, 50)):
-        draw.text((10, 30 + i * 16), line, fill=(50, 50, 50), font=font)
-    draw.text(
-        (10, height - 20), f"{width}x{height} PNG", fill=(100, 100, 100), font=font
-    )
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 @app.api_route("/v1/images/generations", methods=["POST"])
@@ -176,11 +124,14 @@ async def image_generations(request: Request):
                 f"{info.get('format', '?')} ({info.get('base64_length', 0)} bytes)"
             )
 
-    # 生成假图片
-    images_b64 = []
-    for i in range(n):
-        b64 = generate_fake_reference_image(prompt, width, height)
-        images_b64.append(b64)
+    available = _list_images()
+    if available:
+        chosen = random.choices(available, k=min(n, len(available)))
+        images_b64 = [_read_as_base64(p) for p in chosen]
+        print(f"[随机选取] 从 {len(available)} 张图片中选了 {len(chosen)} 张")
+    else:
+        images_b64 = []
+        print("[随机选取] output 目录无可用图片")
 
     response = {
         "created": int(time.time()),
@@ -256,10 +207,14 @@ async def chat_completions(request: Request):
     print(f"[图片数量] {img_count}")
     print(f"[尺寸] {width}x{height}")
 
-    images_b64 = []
-    for i in range(n):
-        b64 = generate_fake_reference_image(prompt, width, height)
-        images_b64.append(b64)
+    available = _list_images()
+    if available:
+        chosen = random.choices(available, k=min(n, len(available)))
+        images_b64 = [_read_as_base64(p) for p in chosen]
+        print(f"[随机选取] 从 {len(available)} 张图片中选了 {len(chosen)} 张")
+    else:
+        images_b64 = []
+        print("[随机选取] output 目录无可用图片")
 
     response = {
         "id": f"img-fake-ref-{int(time.time()*1000)}",

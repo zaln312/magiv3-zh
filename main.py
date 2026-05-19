@@ -4,6 +4,10 @@ img_paths = [
 ]
 
 
+import sys
+sys.path.insert(0, "backend")
+
+
 
 
 # ---------- 启动 paddleocr ----------
@@ -14,7 +18,7 @@ uvicorn ocr_server:app
 # ocr 流程
 global_character_library = []
 
-from ocr_utils import get_ocr_results, prepare_ordered_ocr_and_detect, predict_with_injected_ocr_and_global_id
+from app.utils.ocr_utils import get_ocr_results, prepare_ordered_ocr_and_detect, predict_with_injected_ocr_and_global_id
 from model.florence2.utils import visualise_single_image_prediction
 
 unordered_ocr_res = get_ocr_results(img_paths, only_white_bg=False, zh_texts=True)
@@ -70,7 +74,7 @@ torch.cuda.empty_cache()
 # debug 绘制
 import numpy as np
 from PIL import Image
-from ocr_utils import print_texts
+from app.utils.ocr_utils import print_texts
 
 
 images = [Image.open(img).convert("RGB") for img in img_paths]
@@ -86,7 +90,7 @@ for img_idx in range(len(images)):
     )
     print_texts(img_paths[img_idx], results[img_idx]["ocr_texts"])
 
-from ocr_utils import visualize_character_associations
+from app.utils.ocr_utils import visualize_character_associations
 
 visualize_character_associations(images, results, "./output")
 
@@ -102,7 +106,7 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/targets/x86_64-linux/lib:
     --host 127.0.0.1
 
 # caption
-from ocr_utils import get_captions
+from app.utils.ocr_utils import get_captions
 
 captions = get_captions(img_paths, results, think=False)
 
@@ -142,7 +146,7 @@ for i in range(len(img_paths)):
 
 
 # caption 插入 [id]
-from ocr_utils import preprocess_panel_characters, get_grounding
+from app.utils.ocr_utils import preprocess_panel_characters, get_grounding
 
 grounded_captions = []
 for img_idx in range(len(img_paths)):
@@ -167,7 +171,7 @@ for img_idx in range(len(img_paths)):
     grounded_captions.append(grounded_caption)
 
 # panel_scripts
-from ocr_utils import build_panel_scripts
+from app.utils.ocr_utils import build_panel_scripts
 
 panel_scripts = []
 for result in results:
@@ -181,11 +185,11 @@ for result in results:
         )
     )
 # prose_prompt
-from ocr_utils import get_prose_prompt
+from app.utils.ocr_utils import get_prose_prompt
 
 prose_prompt = get_prose_prompt(grounded_captions, panel_scripts, {})
 
 # prose
-from ocr_utils import get_prose
+from app.utils.ocr_utils import get_prose
 
 prose = get_prose(prose_prompt)

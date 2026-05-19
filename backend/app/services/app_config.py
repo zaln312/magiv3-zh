@@ -4,7 +4,7 @@ Stored in the same SQLite database.
 
 Settings:
   - magi_v3_mode: 'dynamic' (load/unload per operation) or 'persistent_project' (load on enter, unload on exit)
-  - ocr:       { api_url, enabled } — user provides call/format via ocr_utils.py, URL is the only configurable field
+  - ocr:       { api_url, enabled } — user provides call/format via app/utils/ocr_utils.py, URL is the only configurable field
   - caption:   OpenAI-compatible API  { base_url, api_key, model, prompt_template, temperature, max_tokens, top_p, extra_body }
   - prose:     OpenAI-compatible API  { base_url, api_key, model, prompt_template, temperature, max_tokens, top_p, extra_body }
 """

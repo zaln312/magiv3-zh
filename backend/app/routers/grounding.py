@@ -1,28 +1,15 @@
-import sys
-import os
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.utils.state import state
+from app.utils.serialization import serialize_results
 from app.services.model_manager import model_manager
 from app.services.app_config import get_caption_openai_config
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
-
-
-def _serialize_results(results: list) -> list:
-    serialized = []
-    for r in results:
-        s = {}
-        for k, v in r.items():
-            if hasattr(v, "tolist"):
-                s[k] = v.tolist()
-            elif isinstance(v, list):
-                s[k] = [x.tolist() if hasattr(x, "tolist") else x for x in v]
-            else:
-                s[k] = v
-        serialized.append(s)
-    return serialized
 
 
 class GroundingRunRequest(BaseModel):
@@ -34,11 +21,9 @@ async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
     if not state.results:
         raise HTTPException(status_code=400, detail="请先执行 Predict")
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-
     try:
         from PIL import Image
-        from ocr_utils import get_captions, preprocess_panel_characters, get_grounding
+        from app.utils.ocr_utils import get_captions, preprocess_panel_characters, get_grounding
 
         if not state.captions or req.style_prompt:
             caption_cfg = get_caption_openai_config()
@@ -50,8 +35,8 @@ async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
                 caption_config=caption_cfg,
             )
             state.persist_captions()
-            print(
-                f"[DEBUG] grounding/run: 自动执行 Caption 完成, {len(state.captions)} 张图片"
+            logger.debug(
+                f"grounding/run: 自动执行 Caption 完成, {len(state.captions)} 张图片"
             )
 
         model_manager.maybe_load()
@@ -87,11 +72,11 @@ async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
         state.persist_step("grounding")
         state.persist_grounded_captions()
 
-        print(f"[DEBUG] grounding/run: 完成, {len(state.grounded_captions)} 张图片")
+        logger.debug(f"grounding/run: 完成, {len(state.grounded_captions)} 张图片")
         for i, caps in enumerate(state.grounded_captions):
-            print(f"[DEBUG]   img[{i}]: {len(caps)} 个 panel grounded_captions")
+            logger.debug(f"  img[{i}]: {len(caps)} 个 panel grounded_captions")
             for j, c in enumerate(caps):
-                print(f"[DEBUG]     panel[{j}]: {c[:80]}...")
+                logger.debug(f"    panel[{j}]: {c[:80]}...")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Grounding 失败: {str(e)}")
@@ -107,17 +92,17 @@ async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
 
 @router.get("/grounding/results")
 async def get_grounding_results():
-    serialized_results = _serialize_results(state.results)
+    serialized_results = serialize_results(state.results)
 
     for i, (res, caps) in enumerate(zip(serialized_results, state.grounded_captions)):
         res["grounded_caption"] = "\n\n".join(caps) if caps else ""
         res["grounded_captions_per_panel"] = caps
 
-    print(f"[DEBUG] grounding/results: 返回 {len(serialized_results)} 个 results")
+    logger.debug(f"grounding/results: 返回 {len(serialized_results)} 个 results")
     for i, r in enumerate(serialized_results):
-        print(f"[DEBUG]   result[{i}] keys: {list(r.keys())}")
-        print(
-            f"[DEBUG]   result[{i}].grounded_caption 前80字: {r.get('grounded_caption', '')[:80]}..."
+        logger.debug(f"  result[{i}] keys: {list(r.keys())}")
+        logger.debug(
+            f"  result[{i}].grounded_caption 前80字: {r.get('grounded_caption', '')[:80]}..."
         )
 
     return {

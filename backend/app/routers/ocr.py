@@ -1,6 +1,3 @@
-import sys
-import os
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.utils.state import state
@@ -20,8 +17,7 @@ async def run_ocr(req: OcrRunRequest = OcrRunRequest()):
     if not state.img_paths:
         raise HTTPException(status_code=400, detail="请先上传图片")
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-    from ocr_utils import get_ocr_results
+    from app.utils.ocr_utils import get_ocr_results
 
     api_url = get_ocr_api_url()
     format_code = get_ocr_format_code()
@@ -37,7 +33,7 @@ async def run_ocr(req: OcrRunRequest = OcrRunRequest()):
         state.reset_from_ocr()
 
         model_manager.maybe_load()
-        from ocr_utils import prepare_ordered_ocr_and_detect
+        from app.utils.ocr_utils import prepare_ordered_ocr_and_detect
 
         _, _, _, _, ordered_ocr_results = prepare_ordered_ocr_and_detect(
             model_manager.model,

@@ -1,4 +1,3 @@
-import sys
 import os
 import io
 import base64
@@ -7,6 +6,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from PIL import Image
 from app.utils.state import state
+from app.utils.image_utils import (
+    collect_best_crop,
+    collect_all_crops,
+    collect_crops_by_keys,
+    load_design_images,
+)
 from app.services.app_config import get_prose_openai_config, get_reference_config
 
 router = APIRouter()
@@ -29,7 +34,9 @@ class SaveProsePromptRequest(BaseModel):
 
 @router.post("/prose/save_prose_prompt")
 async def save_prose_prompt_api(req: SaveProsePromptRequest):
-    state.prose_prompt = req.prose_prompt_text.split("\n") if req.prose_prompt_text else []
+    state.prose_prompt = (
+        req.prose_prompt_text.split("\n") if req.prose_prompt_text else []
+    )
     state.persist_prose()
     return {"success": True}
 
@@ -50,8 +57,7 @@ async def build_panel_scripts_api():
     if not state.results:
         raise HTTPException(status_code=400, detail="请先执行 Predict")
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-    from ocr_utils import build_panel_scripts
+    from app.utils.ocr_utils import build_panel_scripts
 
     try:
         state.panel_scripts = []
@@ -86,8 +92,7 @@ async def build_prose_prompt_api():
     if not state.panel_scripts:
         raise HTTPException(status_code=400, detail="请先构建 Panel Scripts")
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-    from ocr_utils import get_prose_prompt
+    from app.utils.ocr_utils import get_prose_prompt
 
     try:
         state.prose_prompt = get_prose_prompt(
@@ -113,8 +118,7 @@ async def run_prose():
     if not state.grounded_captions:
         raise HTTPException(status_code=400, detail="请先执行 Grounding")
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-    from ocr_utils import build_panel_scripts, get_prose_prompt, get_prose
+    from app.utils.ocr_utils import build_panel_scripts, get_prose_prompt, get_prose
 
     try:
         state.panel_scripts = []
@@ -179,102 +183,9 @@ async def get_prose_results():
     }
 
 
-def _collect_best_crop(global_id: int) -> dict:
-    best_area = 0
-    best_b64 = None
-    best_img_idx = None
-    best_box = None
-
-    for img_idx, result in enumerate(state.results):
-        gids = result.get("global_character_ids", [])
-        boxes = result.get("characters", [])
-
-        for char_idx, gid in enumerate(gids):
-            if gid != global_id or char_idx >= len(boxes):
-                continue
-
-            box = boxes[char_idx]
-            x1, y1, x2, y2 = box
-            area = (x2 - x1) * (y2 - y1)
-
-            if area > best_area:
-                img_path = state.img_paths[img_idx]
-                if not os.path.exists(img_path):
-                    continue
-                img = Image.open(img_path).convert("RGB")
-                w, h = img.size
-                x1c = max(0, int(x1))
-                y1c = max(0, int(y1))
-                x2c = min(w, int(x2))
-                y2c = min(h, int(y2))
-                if x2c <= x1c or y2c <= y1c:
-                    continue
-                crop = img.crop((x1c, y1c, x2c, y2c))
-                buf = io.BytesIO()
-                crop.save(buf, format="PNG")
-                best_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                best_area = area
-                best_img_idx = img_idx
-                best_box = box
-
-    return {
-        "global_id": global_id,
-        "image_base64": best_b64,
-        "img_idx": best_img_idx,
-        "box": best_box,
-        "crop_area": best_area,
-    }
-
-
-def _collect_all_crops(global_id: int) -> list[dict]:
-    crops = []
-
-    for img_idx, result in enumerate(state.results):
-        gids = result.get("global_character_ids", [])
-        boxes = result.get("characters", [])
-
-        for char_idx, gid in enumerate(gids):
-            if gid != global_id or char_idx >= len(boxes):
-                continue
-
-            box = boxes[char_idx]
-            x1, y1, x2, y2 = box
-            area = (x2 - x1) * (y2 - y1)
-
-            img_path = state.img_paths[img_idx]
-            if not os.path.exists(img_path):
-                continue
-            img = Image.open(img_path).convert("RGB")
-            w, h = img.size
-            x1c = max(0, int(x1))
-            y1c = max(0, int(y1))
-            x2c = min(w, int(x2))
-            y2c = min(h, int(y2))
-            if x2c <= x1c or y2c <= y1c:
-                continue
-            crop = img.crop((x1c, y1c, x2c, y2c))
-            buf = io.BytesIO()
-            crop.save(buf, format="PNG")
-            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-
-            crops.append(
-                {
-                    "img_idx": img_idx,
-                    "char_idx": char_idx,
-                    "box": box,
-                    "area": area,
-                    "image_base64": b64,
-                    "crop_key": f"{img_idx}_{char_idx}",
-                }
-            )
-
-    crops.sort(key=lambda c: c["area"], reverse=True)
-    return crops
-
-
 @router.get("/prose/character_crops/{global_id}")
 async def get_character_crops(global_id: int):
-    info = _collect_best_crop(global_id)
+    info = collect_best_crop(global_id)
     if info["image_base64"] is None:
         raise HTTPException(
             status_code=404, detail=f"未找到角色 {global_id} 的 crop 图片"
@@ -291,7 +202,7 @@ async def get_character_crops(global_id: int):
 
 @router.get("/prose/character_all_crops/{global_id}")
 async def get_character_all_crops(global_id: int):
-    crops = _collect_all_crops(global_id)
+    crops = collect_all_crops(global_id)
     if not crops:
         raise HTTPException(
             status_code=404, detail=f"未找到角色 {global_id} 的 crop 图片"
@@ -306,7 +217,7 @@ async def get_character_all_crops(global_id: int):
 
 @router.get("/prose/character_crop_image/{global_id}/{crop_key}")
 async def get_character_crop_image(global_id: int, crop_key: str):
-    crops = _collect_all_crops(global_id)
+    crops = collect_all_crops(global_id)
     for c in crops:
         if c["crop_key"] == crop_key:
             return {
@@ -341,48 +252,6 @@ async def get_reference_results():
     }
 
 
-def _collect_crops_by_keys(global_id: int, crop_keys: list[str]) -> list[Image.Image]:
-    all_crops = _collect_all_crops(global_id)
-    crop_map = {c["crop_key"]: c for c in all_crops}
-    images = []
-    for key in crop_keys:
-        if key in crop_map:
-            b64 = crop_map[key].get("image_base64")
-            if b64:
-                images.append(
-                    Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-                )
-    if not images:
-        best = _collect_best_crop(global_id)
-        if best["image_base64"]:
-            images.append(
-                Image.open(io.BytesIO(base64.b64decode(best["image_base64"]))).convert(
-                    "RGB"
-                )
-            )
-    return images
-
-
-def _load_design_images(global_id: int, filenames: list[str]) -> list[Image.Image]:
-    from app.routers.character import _design_dir
-
-    d = _design_dir(global_id)
-    images = []
-    for fname in filenames:
-        fpath = os.path.join(d, fname)
-        if not os.path.isfile(fpath):
-            continue
-        ext = os.path.splitext(fname)[1].lower()
-        if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-            continue
-        try:
-            img = Image.open(fpath).convert("RGB")
-            images.append(img)
-        except Exception:
-            continue
-    return images
-
-
 @router.post("/prose/generate_references/{global_id}")
 async def generate_character_references(global_id: int, data: dict = {}):
     if not state.prose:
@@ -412,10 +281,10 @@ async def generate_character_references(global_id: int, data: dict = {}):
     ref_config = get_reference_config()
 
     char_name = state.character_name_map.get(global_id, f"角色{global_id}")
-    crop_images = _collect_crops_by_keys(global_id, crop_keys)
+    crop_images = collect_crops_by_keys(global_id, crop_keys)
 
     if design_image_filenames:
-        design_imgs = _load_design_images(global_id, design_image_filenames)
+        design_imgs = load_design_images(global_id, design_image_filenames)
         crop_images.extend(design_imgs)
 
     from app.services.reference_generator import ip_adapter_generator

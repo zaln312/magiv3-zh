@@ -1,8 +1,6 @@
-import sys
-import os
-
 from fastapi import APIRouter, HTTPException
 from app.utils.state import state
+from app.utils.serialization import serialize_results
 from app.services.model_manager import model_manager
 
 router = APIRouter()
@@ -13,11 +11,9 @@ async def run_predict():
     if not state.unordered_ocr_res:
         raise HTTPException(status_code=400, detail="请先执行 OCR 识别")
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-
     try:
         model_manager.maybe_load()
-        from ocr_utils import run_detection, predict_with_injected_ocr_and_global_id
+        from app.utils.ocr_utils import run_detection, predict_with_injected_ocr_and_global_id
 
         images, batch_inputs, generated_ids, results = run_detection(
             model_manager.model,
@@ -48,7 +44,7 @@ async def run_predict():
 
     return {
         "success": True,
-        "results": _serialize_results(state.results),
+        "results": serialize_results(state.results),
         "count": len(state.results),
     }
 
@@ -56,7 +52,7 @@ async def run_predict():
 @router.get("/predict/results")
 async def get_predict_results():
     return {
-        "results": _serialize_results(state.results),
+        "results": serialize_results(state.results),
         "count": len(state.results),
     }
 
@@ -183,18 +179,3 @@ async def update_text_char_association(data: dict):
     result["text_character_associations"] = associations
     state.persist_predict_single(img_idx)
     return {"success": True}
-
-
-def _serialize_results(results: list) -> list:
-    serialized = []
-    for r in results:
-        s = {}
-        for k, v in r.items():
-            if hasattr(v, "tolist"):
-                s[k] = v.tolist()
-            elif isinstance(v, list):
-                s[k] = [x.tolist() if hasattr(x, "tolist") else x for x in v]
-            else:
-                s[k] = v
-        serialized.append(s)
-    return serialized

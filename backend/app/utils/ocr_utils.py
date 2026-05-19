@@ -718,8 +718,43 @@ def predict_with_injected_ocr_and_global_id(
                     print(f"  cluster {cid} → new global_id {gid}")
 
         else:
-            lib_feats = torch.stack([e["features"] for e in global_character_library])
-            lib_ids = [e["global_id"] for e in global_character_library]
+            def _to_tensor(f):
+                if isinstance(f, torch.Tensor):
+                    return f.to(feats.device)
+                return torch.tensor(f, device=feats.device, dtype=feats.dtype)
+
+            valid_entries = [
+                (e["global_id"], _to_tensor(e["features"]))
+                for e in global_character_library
+                if "features" in e
+            ]
+
+            if not valid_entries:
+                if debug:
+                    print(
+                        f"\n[DEBUG] Image {i}: library has entries but no features → rebuild"
+                    )
+                for entry in global_character_library:
+                    entry.pop("features", None)
+                global_character_library.clear()
+
+                mapping = {}
+                for cid, f in cluster_feats.items():
+                    gid = len(global_character_library)
+                    global_character_library.append(
+                        {"global_id": gid, "features": f.clone()}
+                    )
+                    mapping[cid] = gid
+                    if debug:
+                        print(f"  cluster {cid} → new global_id {gid}")
+
+                results[i]["global_character_ids"] = [
+                    mapping[c] for c in cluster_labels
+                ]
+                continue
+
+            lib_ids = [eid for eid, _ in valid_entries]
+            lib_feats = torch.stack([ft for _, ft in valid_entries])
 
             cluster_ids = list(cluster_feats.keys())
             cluster_stack = torch.stack([cluster_feats[c] for c in cluster_ids])
@@ -894,7 +929,7 @@ def check_format(results) -> bool:
     return True
 
 
-from paddle_utils import filter_white_bg, filter_texts, merge
+from app.utils.paddle_utils import filter_white_bg, filter_texts, merge
 
 
 def preprocess_ocr_results(results, img_paths, only_white_bg: bool, zh_texts: bool):

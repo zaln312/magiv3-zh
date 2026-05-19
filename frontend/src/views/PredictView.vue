@@ -17,7 +17,7 @@
         <el-button v-if="selectedCharIdx !== null" type="danger" @click="deleteSelectedCharacter">
           删除人物框
         </el-button>
-        <el-button v-else @click="addCharacterMode = !addCharacterMode" :type="addCharacterMode ? 'warning' : 'default'">
+        <el-button v-else @click="toggleAddCharacterMode" :type="addCharacterMode ? 'warning' : 'default'">
           {{ addCharacterMode ? '取消添加' : '添加人物框' }}
         </el-button>
         <el-button type="primary" @click="runGrounding" :loading="groundingLoading">
@@ -94,7 +94,7 @@
                 size="small"
                 placeholder="角色名"
                 class="global-char-input"
-                @focus="selectGlobalChar(entry.global_id)"
+                @focus="selectGlobalChar(entry.global_id, false)"
                 @change="updateCharName(entry.global_id, charNameMap[entry.global_id])"
               />
             </div>
@@ -435,7 +435,7 @@ function selectCharacter(idx: number) {
   }
 }
 
-function selectGlobalChar(globalId: number) {
+function selectGlobalChar(globalId: number, toggle = true) {
   if (selectedCharIdx.value !== null) {
     const charIdx = selectedCharIdx.value
     const oldGid = currentGlobalIds.value[charIdx] ?? charIdx
@@ -449,7 +449,7 @@ function selectGlobalChar(globalId: number) {
   }
 
   if (highlightedGlobalId.value === globalId) {
-    highlightedGlobalId.value = null
+    if (toggle) highlightedGlobalId.value = null
   } else {
     highlightedGlobalId.value = globalId
   }
@@ -522,6 +522,13 @@ function deleteGlobalCharEntry(globalId: number) {
   }).catch((e: any) => {
     ElMessage.error(e.response?.data?.detail || '删除失败')
   })
+}
+
+function toggleAddCharacterMode() {
+  if (!addCharacterMode.value) {
+    highlightedGlobalId.value = null
+  }
+  addCharacterMode.value = !addCharacterMode.value
 }
 
 function addGlobalCharEntry() {
