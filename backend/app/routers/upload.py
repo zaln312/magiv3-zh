@@ -8,21 +8,36 @@ from app.utils.state import state
 router = APIRouter()
 
 
+def _project_upload_dir() -> str:
+    if state.project_id:
+        d = os.path.join(UPLOAD_DIR, state.project_id)
+    else:
+        d = UPLOAD_DIR
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 @router.post("/upload")
 async def upload_images(files: list[UploadFile] = File(...)):
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    if not state.project_id:
+        raise HTTPException(status_code=400, detail="请先创建或选择项目")
+
+    upload_dir = _project_upload_dir()
     saved_paths = []
+    original_names = []
     for file in files:
         ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
         filename = f"{uuid.uuid4().hex}{ext}"
-        filepath = os.path.join(UPLOAD_DIR, filename)
+        filepath = os.path.join(upload_dir, filename)
         content = await file.read()
         with open(filepath, "wb") as f:
             f.write(content)
         saved_paths.append(filepath)
+        original_names.append(file.filename or "")
 
     state.img_paths.extend(saved_paths)
     state.reset_pipeline()
+    state.persist_images(original_names)
 
     return JSONResponse(
         content={
@@ -35,7 +50,14 @@ async def upload_images(files: list[UploadFile] = File(...)):
 
 @router.get("/images")
 async def list_images():
-    return {"img_paths": state.img_paths, "count": len(state.img_paths)}
+    from app.services.database import load_image_names
+
+    image_names = load_image_names(state.project_id) if state.project_id else {}
+    return {
+        "img_paths": state.img_paths,
+        "count": len(state.img_paths),
+        "image_names": image_names,
+    }
 
 
 @router.post("/images/reorder")
@@ -48,6 +70,7 @@ async def reorder_images(data: dict):
         )
     state.img_paths = [state.img_paths[i] for i in order]
     state.reset_pipeline()
+    state.persist_images()
     return {"success": True, "img_paths": state.img_paths}
 
 
@@ -63,6 +86,7 @@ async def delete_image(data: dict):
     if os.path.exists(path):
         os.remove(path)
     state.reset_pipeline()
+    state.persist_images()
     return {"success": True, "img_paths": state.img_paths, "removed": path}
 
 

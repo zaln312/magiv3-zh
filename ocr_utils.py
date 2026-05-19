@@ -785,11 +785,13 @@ def predict_with_injected_ocr_and_global_id(
 import httpx
 
 
-def user_get_ocr_results(image_paths: list[str]):
+def user_get_ocr_results(
+    image_paths: list[str], api_url: str = "http://127.0.0.1:8000/ocr"
+):
     """
     用户提供的 ocr api 调用
     """
-    url = "http://127.0.0.1:8000/ocr"
+    url = api_url
 
     params = {"image_paths": image_paths}
 
@@ -801,18 +803,27 @@ def user_get_ocr_results(image_paths: list[str]):
         raise Exception(f"OCR 服务调用失败: {response.text}")
 
 
-def user_format_ocr_results(results):
+def user_format_ocr_results(results, format_code: str | None = None):
     """
-    用户提供的 ocr results 格式化
+    用户提供的 ocr results 格式化。
+    可通过 format_code 参数动态注入自定义格式化代码。
+    format_code 中必须定义函数 user_format_ocr_results(results)。
     """
-    return [
-        {
-            "img_path": res["input_path"],
-            "polys": res["rec_polys"],
-            "texts": res["rec_texts"],
-        }
-        for res in results
-    ]
+    if format_code is None:
+        return [
+            {
+                "polys": res["rec_polys"],
+                "texts": res["rec_texts"],
+            }
+            for res in results
+        ]
+
+    namespace = {}
+    exec(compile(format_code, "<user_ocr_format>", "exec"), namespace)
+    fn = namespace.get("user_format_ocr_results")
+    if fn is None:
+        raise ValueError("format_code 中必须定义 user_format_ocr_results(results) 函数")
+    return fn(results)
 
 
 import numpy as np
@@ -822,7 +833,7 @@ from typing import List, Union
 def check_format(results) -> bool:
     """
     校验 OCR 结果列表格式：
-    - 列表中的每一项必须是一个字典，包含键 img_path, polys, texts
+    - 列表中的每一项必须是一个字典，包含键 polys, texts
     - polys 与 texts 长度必须相等
     - polys 中的每个多边形至少包含两个点，每个点可用 p[0], p[1] 分别获取 x, y 坐标
     - texts 中的每个元素必须是字符串
@@ -831,8 +842,7 @@ def check_format(results) -> bool:
         raise TypeError(f"results 必须是列表，当前类型：{type(results)}")
 
     for i, res in enumerate(results):
-        # 检查必要键是否存在
-        for key in ("img_path", "polys", "texts"):
+        for key in ("polys", "texts"):
             if key not in res:
                 raise KeyError(
                     f"results[{i}] 缺少必要键 '{key}'，实际键：{list(res.keys())}"
@@ -887,25 +897,30 @@ def check_format(results) -> bool:
 from paddle_utils import filter_white_bg, filter_texts, merge
 
 
-def preprocess_ocr_results(results, only_white_bg: bool, zh_texts: bool):
+def preprocess_ocr_results(results, img_paths, only_white_bg: bool, zh_texts: bool):
     processed = []
-    for res in results:
+    for res, img_path in zip(results, img_paths):
         if only_white_bg:
-            res = filter_white_bg(res)
+            res = filter_white_bg(res, img_path)
         if zh_texts:
             res = filter_texts(res)
         processed.append(merge(res))
     return processed
 
 
-def get_ocr_results(img_paths: list[str], only_white_bg: bool, zh_texts: bool):
+def get_ocr_results(
+    img_paths: list[str],
+    only_white_bg: bool,
+    zh_texts: bool,
+    api_url: str = "http://127.0.0.1:8000/ocr",
+    format_code: str | None = None,
+):
 
-    results = user_get_ocr_results(img_paths)
-    # print("第一个结果的键：", list(results[0].keys()))
-    results = user_format_ocr_results(results)
+    results = user_get_ocr_results(img_paths, api_url)
+    results = user_format_ocr_results(results, format_code=format_code)
     if not check_format(results):
         raise ValueError("OCR 结果格式错误")
-    results = preprocess_ocr_results(results, only_white_bg, zh_texts)
+    results = preprocess_ocr_results(results, img_paths, only_white_bg, zh_texts)
     return results
 
 
@@ -921,11 +936,20 @@ from openai import OpenAI
 
 
 def _get_caption(
-    img: Image.Image, think: bool = False, style_prompt: str | None = None
+    img: Image.Image,
+    think: bool = False,
+    style_prompt: str | None = None,
+    caption_config: dict | None = None,
 ):
     """
     从单 panel 中获取描述
+    caption_config: from get_caption_openai_config()
     """
+    if caption_config is None:
+        from app.services.app_config import get_caption_openai_config
+
+        caption_config = get_caption_openai_config()
+
     if img.mode != "RGB":
         img = img.convert("RGB")
 
@@ -933,14 +957,23 @@ def _get_caption(
     img.save(buffer, format="PNG")
     img_base64 = base64.b64encode(buffer.getvalue()).decode()
 
-    base_text = "Describe this image in a single prose paragraph. For each character, start by clearly stating their relative position (e.g., 'the character on the left', 'in the foreground', 'the girl on the right'), then describe their appearance (hair, clothing), and finally their actions or emotions. Do not use specific names. Ignore all embedded text, speech bubbles, and dialogue. Focus purely on visual elements."
+    base_text = caption_config.get("prompt_template") or (
+        "Describe this image in a single prose paragraph. "
+        "For each character, start by clearly stating their relative position "
+        "(e.g., 'the character on the left', 'in the foreground', 'the girl on the right'), "
+        "then describe their appearance (hair, clothing), and finally their actions or emotions. "
+        "Do not use specific names. Ignore all embedded text, speech bubbles, and dialogue. "
+        "Focus purely on visual elements."
+    )
 
     if style_prompt:
         prompt_text = f"{style_prompt}\n\n{base_text}"
     else:
         prompt_text = base_text
 
-    client = OpenAI(base_url="http://localhost:8001/v1", api_key="EMPTY")
+    client = OpenAI(
+        base_url=caption_config["base_url"], api_key=caption_config["api_key"]
+    )
     messages = [
         {
             "role": "user",
@@ -956,32 +989,29 @@ def _get_caption(
             ],
         }
     ]
-    if not think:
-        response = client.chat.completions.create(
-            model="Qwen3.5-4B",
-            messages=messages,
-            max_tokens=1024,
-            temperature=0.7,
-            top_p=0.8,
-            presence_penalty=1.5,
-            extra_body={
-                "top_k": 20,
-                "chat_template_kwargs": {"enable_thinking": False},
-            },
-        )
-    else:
-        response = client.chat.completions.create(
-            model="Qwen3.5-4B",
-            messages=messages,
-            max_tokens=1024,
-            temperature=1.0,
-            top_p=0.95,
-            presence_penalty=1.5,
-            extra_body={
-                "top_k": 20,
-                "chat_template_kwargs": {"enable_thinking": True},
-            },
-        )
+
+    create_kwargs = {
+        "model": caption_config["model"],
+        "messages": messages,
+        "max_tokens": caption_config.get("max_tokens", 1024),
+        "temperature": caption_config.get("temperature", 0.7),
+        "top_p": caption_config.get("top_p", 0.8),
+        "presence_penalty": caption_config.get("presence_penalty", 1.5),
+    }
+    if "extra_body" in caption_config and caption_config["extra_body"]:
+        create_kwargs["extra_body"] = caption_config["extra_body"]
+    if think:
+        create_kwargs["temperature"] = 1.0
+        create_kwargs["top_p"] = 0.95
+        if (
+            "extra_body" in create_kwargs
+            and "chat_template_kwargs" in create_kwargs["extra_body"]
+        ):
+            create_kwargs["extra_body"]["chat_template_kwargs"][
+                "enable_thinking"
+            ] = True
+
+    response = client.chat.completions.create(**create_kwargs)
     return response.choices[0].message.content
 
 
@@ -990,6 +1020,7 @@ def get_captions(
     results: list[dict],
     think: bool,
     style_prompt: str | None = None,
+    caption_config: dict | None = None,
 ):
     assert len(image_paths) == len(results), "image_paths 和 results 长度不一致"
 
@@ -999,8 +1030,7 @@ def get_captions(
         img = Image.open(img_path)
         for idx, panel in enumerate(result["panels"]):
             img_panel = img.crop(panel)
-            img_panel.save(f"output/panel{idx}.jpg")
-            caption = _get_caption(img_panel, think, style_prompt)
+            caption = _get_caption(img_panel, think, style_prompt, caption_config)
             captions.append(caption)
         captions_list.append(captions)
     return captions_list
@@ -1508,24 +1538,43 @@ def visualize_character_associations(images, results, output_dir="output"):
         print(f"Visual saved: {save_path}")
 
 
-def get_prose_prompt(grounded_captions, panel_scripts):
+def get_prose_prompt(
+    grounded_captions, panel_scripts, character_name_map=None, story_background=""
+):
+    import re
+
+    if character_name_map is None:
+        character_name_map = {}
+
+    def _replace_char_ids(text):
+        def replacer(match):
+            gid = int(match.group(1))
+            name = character_name_map.get(gid)
+            if name:
+                return f"[{name}]"
+            return match.group(0)
+
+        return re.sub(r"\[(\d+)\]", replacer, text)
+
     prose_prompt = []
-    prose_prompt.append("I have a series of manga panel descriptions and dialogues.")
+    if story_background and story_background.strip():
+        prose_prompt.append("Story background:")
+        prose_prompt.append(f"{story_background.strip()}")
+        prose_prompt.append("")
+    prose_prompt.append("Next is a series of manga panel descriptions and dialogues.")
     prose_prompt.append("")
     global_panel_count = 1
 
     for img_idx, (captions, scripts) in enumerate(
         zip(grounded_captions, panel_scripts)
     ):
-        # prose_prompt.append(f"Image {img_idx+1}")
         for panel_idx, (caption, script) in enumerate(zip(captions, scripts)):
-            # prose_prompt.append(f"Panel {panel_idx+1}")
             prose_prompt.append(f"Panel {global_panel_count}")
             prose_prompt.append("")
             global_panel_count += 1
 
             prose_prompt.append("Description:")
-            prose_prompt.append(f"{caption}")
+            prose_prompt.append(f"{_replace_char_ids(caption)}")
 
             prose_prompt.append("Dialogues: ")
             for line in script:
@@ -1533,32 +1582,38 @@ def get_prose_prompt(grounded_captions, panel_scripts):
 
             prose_prompt.append("")
 
-    prose_prompt.append(
-        "I want you to write a summary in Chinese so that a blind or visually impaired person can understand the story. Make sure to stick to the provided details. All these panels belong to the same page so make sure your narrative is coherent. The format of the narrative should be a prose."
-    )
     return prose_prompt
 
 
-def get_prose(prose_prompt: list[str]) -> str:
+def get_prose(prose_prompt: list[str], prose_config: dict | None = None) -> str:
     from openai import OpenAI
 
-    prompt_text = "\n".join(prose_prompt)
+    if prose_config is None:
+        from app.services.app_config import get_prose_openai_config
 
-    client = OpenAI(base_url="http://localhost:8001/v1", api_key="EMPTY")
-    response = client.chat.completions.create(
-        model="Qwen3.5-4B",
-        messages=[
+        prose_config = get_prose_openai_config()
+
+    prompt_template = prose_config.get("prompt_template") or ""
+    if prompt_template and prompt_template.strip():
+        prompt_text = prompt_template.format(prompt="\n".join(prose_prompt))
+    else:
+        prompt_text = "\n".join(prose_prompt)
+
+    client = OpenAI(base_url=prose_config["base_url"], api_key=prose_config["api_key"])
+    create_kwargs = {
+        "model": prose_config["model"],
+        "messages": [
             {"role": "user", "content": prompt_text},
         ],
-        max_tokens=4096,
-        temperature=0.7,
-        top_p=0.8,
-        presence_penalty=1.5,
-        extra_body={
-            "top_k": 20,
-            "chat_template_kwargs": {"enable_thinking": False},
-        },
-    )
+        "max_tokens": prose_config.get("max_tokens", 4096),
+        "temperature": prose_config.get("temperature", 0.7),
+        "top_p": prose_config.get("top_p", 0.8),
+        "presence_penalty": prose_config.get("presence_penalty", 1.5),
+    }
+    if "extra_body" in prose_config and prose_config["extra_body"]:
+        create_kwargs["extra_body"] = prose_config["extra_body"]
+
+    response = client.chat.completions.create(**create_kwargs)
     if not response.choices:
         raise RuntimeError("LLM 返回了空的 choices 列表，请检查 LLM 服务是否正常")
     return response.choices[0].message.content

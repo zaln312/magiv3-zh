@@ -5,6 +5,16 @@ const router = createRouter({
   routes: [
     {
       path: '/',
+      name: 'home',
+      component: () => import('../views/HomeView.vue'),
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('../views/SettingsView.vue'),
+    },
+    {
+      path: '/upload',
       name: 'upload',
       component: () => import('../views/UploadView.vue'),
     },
@@ -27,6 +37,16 @@ const router = createRouter({
       path: '/prose',
       name: 'prose',
       component: () => import('../views/ProseView.vue'),
+    },
+    {
+      path: '/character-reference',
+      name: 'characterReference',
+      component: () => import('../views/CharacterReferenceView.vue'),
+    },
+    {
+      path: '/video-generation',
+      name: 'videoGeneration',
+      component: () => import('../views/VideoGenerationView.vue'),
     },
   ],
 })

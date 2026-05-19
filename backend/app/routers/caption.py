@@ -4,12 +4,14 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.utils.state import state
+from app.services.app_config import get_caption_openai_config
 
 router = APIRouter()
 
 
 class CaptionRunRequest(BaseModel):
     think: bool = False
+    style_prompt: str | None = None
 
 
 def _serialize_results(results: list) -> list:
@@ -35,8 +37,16 @@ async def run_caption(req: CaptionRunRequest = CaptionRunRequest()):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
     from ocr_utils import get_captions
 
+    caption_cfg = get_caption_openai_config()
+
     try:
-        state.captions = get_captions(state.img_paths, state.results, think=req.think)
+        state.captions = get_captions(
+            state.img_paths,
+            state.results,
+            think=req.think,
+            style_prompt=req.style_prompt,
+            caption_config=caption_cfg,
+        )
         print(
             f"[DEBUG] caption/run: state.captions 类型={type(state.captions)}, 长度={len(state.captions)}"
         )
@@ -44,6 +54,9 @@ async def run_caption(req: CaptionRunRequest = CaptionRunRequest()):
             print(f"[DEBUG]   img[{i}]: {len(caps)} 个 panel captions")
             for j, c in enumerate(caps):
                 print(f"[DEBUG]     panel[{j}]: {c[:80]}...")
+
+        state.persist_step("caption")
+        state.persist_captions()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Caption 失败: {str(e)}")
 
@@ -95,6 +108,7 @@ async def update_caption(data: dict):
         raise HTTPException(status_code=400, detail="img_idx 无效")
 
     state.captions[img_idx] = [caption]
+    state.persist_captions()
     print(f"[DEBUG] caption/update_caption: img[{img_idx}] 更新为: {caption[:80]}...")
     return {"success": True}
 
@@ -115,6 +129,7 @@ async def update_panel_script(data: dict):
         state.panel_scripts.append([""])
 
     state.panel_scripts[img_idx] = [panel_script]
+    state.persist_panel_scripts()
     print(
         f"[DEBUG] caption/update_panel_script: img[{img_idx}] 更新为: {panel_script[:80]}..."
     )

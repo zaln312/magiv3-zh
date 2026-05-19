@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.utils.state import state
 from app.services.model_manager import model_manager
+from app.services.app_config import get_caption_openai_config
 
 router = APIRouter()
 
@@ -39,18 +40,21 @@ async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
         from PIL import Image
         from ocr_utils import get_captions, preprocess_panel_characters, get_grounding
 
-        if not state.captions:
+        if not state.captions or req.style_prompt:
+            caption_cfg = get_caption_openai_config()
             state.captions = get_captions(
                 state.img_paths,
                 state.results,
                 think=False,
                 style_prompt=req.style_prompt,
+                caption_config=caption_cfg,
             )
+            state.persist_captions()
             print(
                 f"[DEBUG] grounding/run: 自动执行 Caption 完成, {len(state.captions)} 张图片"
             )
 
-        model_manager.load()
+        model_manager.maybe_load()
 
         grounded_results = []
         for i in range(len(state.img_paths)):
@@ -80,6 +84,9 @@ async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
             grounded_captions.append(grounded_caption)
         state.grounded_captions = grounded_captions
 
+        state.persist_step("grounding")
+        state.persist_grounded_captions()
+
         print(f"[DEBUG] grounding/run: 完成, {len(state.grounded_captions)} 张图片")
         for i, caps in enumerate(state.grounded_captions):
             print(f"[DEBUG]   img[{i}]: {len(caps)} 个 panel grounded_captions")
@@ -89,7 +96,7 @@ async def run_grounding(req: GroundingRunRequest = GroundingRunRequest()):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Grounding 失败: {str(e)}")
     finally:
-        model_manager.unload()
+        model_manager.maybe_unload()
 
     return {
         "success": True,
@@ -116,7 +123,19 @@ async def get_grounding_results():
     return {
         "results": serialized_results,
         "count": len(serialized_results),
+        "style_prompt": state.style_prompt,
     }
+
+
+class SaveStylePromptRequest(BaseModel):
+    style_prompt: str = ""
+
+
+@router.post("/grounding/save_style_prompt")
+async def save_style_prompt_api(req: SaveStylePromptRequest):
+    state.style_prompt = req.style_prompt
+    state.persist_prose()
+    return {"success": True, "style_prompt": state.style_prompt}
 
 
 class UpdateGroundedCaptionRequest(BaseModel):
@@ -137,4 +156,5 @@ async def update_grounded_caption(data: UpdateGroundedCaptionRequest):
         raise HTTPException(status_code=400, detail="panel_idx 无效")
 
     state.grounded_captions[img_idx][panel_idx] = caption
+    state.persist_grounded_caption_single(img_idx, panel_idx)
     return {"success": True}

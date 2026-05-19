@@ -16,7 +16,7 @@ async def run_predict():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
     try:
-        model_manager.load()
+        model_manager.maybe_load()
         from ocr_utils import run_detection, predict_with_injected_ocr_and_global_id
 
         images, batch_inputs, generated_ids, results = run_detection(
@@ -37,10 +37,14 @@ async def run_predict():
             debug=False,
         )
         state.reset_from_predict()
+
+        state.persist_step("predict")
+        state.persist_predict_results()
+        state.persist_global_characters()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Predict 失败: {str(e)}")
     finally:
-        model_manager.unload()
+        model_manager.maybe_unload()
 
     return {
         "success": True,
@@ -75,6 +79,7 @@ async def update_character_box(data: dict):
         raise HTTPException(status_code=400, detail="box 格式应为 [x1, y1, x2, y2]")
 
     chars[char_idx] = box
+    state.persist_predict_single(img_idx)
     return {"success": True}
 
 
@@ -109,6 +114,8 @@ async def delete_character(data: dict):
         new_associations.append([t_idx, c_idx])
     result["text_character_associations"] = new_associations
 
+    state.persist_predict_single(img_idx)
+    state.persist_global_characters()
     return {"success": True}
 
 
@@ -145,7 +152,13 @@ async def add_character(data: dict):
 
     result.setdefault("global_character_ids", []).append(assigned_gid)
 
-    return {"success": True, "char_idx": len(result["characters"]) - 1, "global_id": assigned_gid}
+    state.persist_predict_single(img_idx)
+    state.persist_global_characters()
+    return {
+        "success": True,
+        "char_idx": len(result["characters"]) - 1,
+        "global_id": assigned_gid,
+    }
 
 
 @router.post("/predict/update_text_char_association")
@@ -168,6 +181,7 @@ async def update_text_char_association(data: dict):
         associations.append([text_idx, char_idx])
 
     result["text_character_associations"] = associations
+    state.persist_predict_single(img_idx)
     return {"success": True}
 
 

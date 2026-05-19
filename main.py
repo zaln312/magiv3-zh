@@ -183,7 +183,7 @@ for result in results:
 # prose_prompt
 from ocr_utils import get_prose_prompt
 
-prose_prompt = get_prose_prompt(grounded_captions, panel_scripts)
+prose_prompt = get_prose_prompt(grounded_captions, panel_scripts, {})
 
 # prose
 from ocr_utils import get_prose

@@ -121,6 +121,9 @@ async function loadImages() {
   try {
     const res = await uploadApi.list()
     imgPaths.value = res.data.img_paths
+    if (res.data.image_names) {
+      fileNames.value = res.data.image_names
+    }
   } catch {
     imgPaths.value = []
   }

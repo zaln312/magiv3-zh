@@ -1,9 +1,23 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import CORS_ORIGINS
-from app.routers import upload, ocr, predict, caption, grounding, prose, character
+from app.routers import (
+    upload,
+    ocr,
+    predict,
+    caption,
+    grounding,
+    prose,
+    character,
+    project,
+    video,
+)
+from app.routers.config_router import router as config_router
+from app.services.database import init_db
 
-app = FastAPI(title="Magi Studio API", version="0.1.0")
+init_db()
+
+app = FastAPI(title="Magi Studio API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -13,6 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(project.router, prefix="/api", tags=["project"])
 app.include_router(upload.router, prefix="/api", tags=["upload"])
 app.include_router(ocr.router, prefix="/api", tags=["ocr"])
 app.include_router(predict.router, prefix="/api", tags=["predict"])
@@ -20,6 +35,8 @@ app.include_router(caption.router, prefix="/api", tags=["caption"])
 app.include_router(grounding.router, prefix="/api", tags=["grounding"])
 app.include_router(prose.router, prefix="/api", tags=["prose"])
 app.include_router(character.router, prefix="/api", tags=["character"])
+app.include_router(video.router, prefix="/api", tags=["video"])
+app.include_router(config_router, prefix="/api", tags=["config"])
 
 
 @app.get("/api/health")

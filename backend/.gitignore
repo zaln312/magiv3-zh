@@ -1,5 +1,5 @@
 # 上传文件
-uploads/
+/uploads/
 
 # Python 缓存
 __pycache__/
@@ -10,3 +10,6 @@ __pycache__/
 # 测试目录
 /input/
 /output/
+
+# 数据库
+/data/

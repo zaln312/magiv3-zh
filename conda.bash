@@ -13,6 +13,11 @@ pip install bitsandbytes accelerate
 pip install dill
 
 pip install opencc-python-reimplemented
+# pip install diffusers accelerate peft
+
+
+pip install python-dotenv
+pip install -U dashscope
 
 # ------------------------------------------------------------
 # llamacpp

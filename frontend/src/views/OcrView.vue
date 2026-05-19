@@ -170,7 +170,6 @@ import { ocrApi, predictApi } from '../api/endpoints'
 const router = useRouter()
 
 interface OcrResult {
-  img_path: string
   boxes: number[][]
   texts: string[]
 }
@@ -670,7 +669,7 @@ onMounted(loadOcrResults)
   flex-shrink: 0;
   border: 1px solid #e0e0e0;
   border-radius: 4px;
-  padding: 12px;
+  padding: 0 12px 12px 12px;
   max-height: 700px;
   overflow-y: auto;
 }
@@ -681,7 +680,7 @@ onMounted(loadOcrResults)
   position: sticky;
   top: 0;
   background: #fff;
-  padding-bottom: 8px;
+  padding: 12px 0 8px 0;
   z-index: 1;
 }
 

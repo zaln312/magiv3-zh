@@ -93,6 +93,9 @@ export const groundingApi = {
   updateCaption(imgIdx: number, panelIdx: number, groundedCaption: string) {
     return api.post('/grounding/update_caption', { img_idx: imgIdx, panel_idx: panelIdx, grounded_caption: groundedCaption })
   },
+  saveStylePrompt(stylePrompt: string) {
+    return api.post('/grounding/save_style_prompt', { style_prompt: stylePrompt })
+  },
 }
 
 export const proseApi = {
@@ -107,6 +110,35 @@ export const proseApi = {
   },
   results() {
     return api.get('/prose/results')
+  },
+  saveStoryBackground(storyBackground: string) {
+    return api.post('/prose/save_story_background', { story_background: storyBackground })
+  },
+  saveProsePrompt(prosePromptText: string) {
+    return api.post('/prose/save_prose_prompt', { prose_prompt_text: prosePromptText })
+  },
+  saveProseText(proseText: string) {
+    return api.post('/prose/save_prose_text', { prose_text: proseText })
+  },
+  characterCrops(globalId: number) {
+    return api.get(`/prose/character_crops/${globalId}`)
+  },
+  characterAllCrops(globalId: number) {
+    return api.get(`/prose/character_all_crops/${globalId}`)
+  },
+  characterCropImage(globalId: number, cropKey: string) {
+    return api.get(`/prose/character_crop_image/${globalId}/${cropKey}`)
+  },
+  generateReferences(globalId: number, views: string[], cropKeys?: string[], numPerView?: number, designImageFilenames?: string[]) {
+    return api.post(`/prose/generate_references/${globalId}`, {
+      views,
+      crop_keys: cropKeys || [],
+      num_per_view: numPerView || 1,
+      design_image_filenames: designImageFilenames || [],
+    })
+  },
+  referenceResults() {
+    return api.get('/prose/reference_results')
   },
 }
 
@@ -128,5 +160,79 @@ export const characterApi = {
   },
   deleteFromLibrary(globalId: number) {
     return api.delete(`/character/library/${globalId}`)
+  },
+  designImages(globalId: number) {
+    return api.get(`/character/${globalId}/design_images`)
+  },
+  uploadDesignImage(globalId: number, file: File) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post(`/character/${globalId}/design_upload`, formData)
+  },
+  deleteDesignImage(globalId: number, filename: string) {
+    return api.delete(`/character/${globalId}/design_image/${filename}`)
+  },
+}
+
+export const videoApi = {
+  prepare() {
+    return api.get('/video/prepare')
+  },
+  submit() {
+    return api.post('/video/submit')
+  },
+  status() {
+    return api.get('/video/status')
+  },
+  cancel() {
+    return api.post('/video/cancel')
+  },
+  result() {
+    return api.get('/video/result')
+  },
+}
+
+export const projectApi = {
+  list() {
+    return api.get('/project/list')
+  },
+  create(name: string) {
+    return api.post('/project/create', { name })
+  },
+  load(projectId: string) {
+    return api.post(`/project/${projectId}/load`)
+  },
+  get(projectId: string) {
+    return api.get(`/project/${projectId}`)
+  },
+  rename(projectId: string, name: string) {
+    return api.post(`/project/${projectId}/rename`, { name })
+  },
+  delete(projectId: string) {
+    return api.delete(`/project/${projectId}`)
+  },
+  current() {
+    return api.get('/project/current')
+  },
+  exit() {
+    return api.post('/project/exit')
+  },
+  applyMagiMode() {
+    return api.post('/project/apply_magi_mode')
+  },
+}
+
+export const configApi = {
+  get() {
+    return api.get('/config')
+  },
+  update(config: any) {
+    return api.post('/config', config)
+  },
+  reset() {
+    return api.post('/config/reset')
+  },
+  getMagiMode() {
+    return api.get('/config/magi_v3_mode')
   },
 }

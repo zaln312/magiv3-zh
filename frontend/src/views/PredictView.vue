@@ -750,17 +750,8 @@ async function loadCharLibrary() {
   } catch {}
 }
 
-async function runGrounding() {
-  groundingLoading.value = true
-  try {
-    await groundingApi.run()
-    ElMessage.success('Grounding 完成')
-    router.push('/grounding')
-  } catch (e: any) {
-    ElMessage.error('Grounding 失败: ' + (e.response?.data?.detail || e.message))
-  } finally {
-    groundingLoading.value = false
-  }
+function runGrounding() {
+  router.push('/grounding')
 }
 
 watch(currentImgIdx, async () => {
@@ -794,7 +785,7 @@ onMounted(() => { loadResults(); loadCharLibrary() })
 .side-panels { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
 
 .global-char-panel {
-  border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;
+  border: 1px solid #e0e0e0; border-radius: 4px; padding: 0 12px 12px 12px;
   max-height: 700px; overflow-y: auto;
 }
 .global-char-panel h3 {
@@ -803,7 +794,7 @@ onMounted(() => { loadResults(); loadCharLibrary() })
   position: sticky;
   top: 0;
   background: #fff;
-  padding-bottom: 8px;
+  padding: 12px 0 8px 0;
   z-index: 1;
 }
 

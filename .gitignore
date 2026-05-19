@@ -16,3 +16,4 @@ __pycache__/
 # 其他
 /.vscode/
 /README.md
+.env

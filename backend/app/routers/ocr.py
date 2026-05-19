@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.utils.state import state
 from app.services.model_manager import model_manager
+from app.services.app_config import get_ocr_api_url, get_ocr_format_code
 
 router = APIRouter()
 
@@ -22,15 +23,20 @@ async def run_ocr(req: OcrRunRequest = OcrRunRequest()):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
     from ocr_utils import get_ocr_results
 
+    api_url = get_ocr_api_url()
+    format_code = get_ocr_format_code()
+
     try:
         state.unordered_ocr_res = get_ocr_results(
             state.img_paths,
             only_white_bg=req.only_white_bg,
             zh_texts=req.zh_texts,
+            api_url=api_url,
+            format_code=format_code,
         )
         state.reset_from_ocr()
 
-        model_manager.load()
+        model_manager.maybe_load()
         from ocr_utils import prepare_ordered_ocr_and_detect
 
         _, _, _, _, ordered_ocr_results = prepare_ordered_ocr_and_detect(
@@ -40,10 +46,13 @@ async def run_ocr(req: OcrRunRequest = OcrRunRequest()):
             state.unordered_ocr_res,
         )
         state.unordered_ocr_res = ordered_ocr_results
+
+        state.persist_step("ocr")
+        state.persist_ocr_results()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OCR 识别失败: {str(e)}")
     finally:
-        model_manager.unload()
+        model_manager.maybe_unload()
 
     return {
         "success": True,
@@ -77,6 +86,7 @@ async def update_ocr_text(data: dict):
         raise HTTPException(status_code=400, detail="text_idx 无效")
 
     ocr_res["texts"][text_idx] = new_text
+    state.persist_ocr_text(img_idx)
     return {"success": True}
 
 
@@ -100,6 +110,7 @@ async def update_ocr_box(data: dict):
         raise HTTPException(status_code=400, detail="box 格式应为 [x1, y1, x2, y2]")
 
     ocr_res["boxes"][box_idx] = box
+    state.persist_ocr_boxes(img_idx)
     return {"success": True}
 
 
@@ -120,6 +131,7 @@ async def delete_ocr_box(data: dict):
 
     ocr_res["boxes"].pop(box_idx)
     ocr_res["texts"].pop(box_idx)
+    state.persist_ocr_results()
     return {"success": True}
 
 
@@ -145,6 +157,7 @@ async def reorder_ocr_entries(data: dict):
     new_texts = [texts[i] for i in order]
     ocr_res["boxes"] = new_boxes
     ocr_res["texts"] = new_texts
+    state.persist_ocr_results()
     return {"success": True}
 
 
@@ -166,4 +179,5 @@ async def add_ocr_box(data: dict):
     ocr_res = state.unordered_ocr_res[img_idx]
     ocr_res["boxes"].append(box)
     ocr_res["texts"].append(text)
+    state.persist_ocr_results()
     return {"success": True, "idx": len(ocr_res["boxes"]) - 1}

@@ -99,7 +99,7 @@
               </div>
             </el-option>
           </el-select>
-          <el-button type="primary" @click="runProse" :loading="proseLoading">
+          <el-button type="primary" @click="runProse">
             生成 Prose
           </el-button>
         </div>
@@ -175,7 +175,7 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { groundingApi, proseApi, characterApi } from '../api/endpoints'
+import { groundingApi, characterApi } from '../api/endpoints'
 
 const router = useRouter()
 
@@ -212,7 +212,7 @@ function onPresetChange(value: string) {
 const results = ref<any[]>([])
 const currentImgIdx = ref(0)
 const currentPanelIdx = ref(0)
-const proseLoading = ref(false)
+
 const panelCharacters = ref<any[][]>([])
 
 const stageRef = ref<any>(null)
@@ -618,6 +618,7 @@ async function loadResults() {
   try {
     const res = await groundingApi.results()
     results.value = res.data.results || []
+    stylePrompt.value = res.data.style_prompt || ''
     const hasGrounded = results.value.some((r: any) =>
       r.grounded_captions_per_panel && r.grounded_captions_per_panel.length > 0
     )
@@ -656,16 +657,7 @@ async function goNext() {
 }
 
 async function runProse() {
-  proseLoading.value = true
-  try {
-    await proseApi.run()
-    ElMessage.success('Prose 生成完成')
-    router.push('/prose')
-  } catch (e: any) {
-    ElMessage.error('生成失败: ' + (e.response?.data?.detail || e.message))
-  } finally {
-    proseLoading.value = false
-  }
+  router.push('/prose')
 }
 
 watch(currentImgIdx, () => {
@@ -677,6 +669,14 @@ watch([currentImgIdx, currentPanelIdx], async () => {
   syncEditableHtml()
   await nextTick()
   await loadImage()
+})
+
+let styleSaveTimer: ReturnType<typeof setTimeout> | null = null
+watch(stylePrompt, (val) => {
+  if (styleSaveTimer) clearTimeout(styleSaveTimer)
+  styleSaveTimer = setTimeout(() => {
+    groundingApi.saveStylePrompt(val).catch(() => {})
+  }, 500)
 })
 
 onMounted(loadResults)

@@ -1,5 +1,6 @@
 from opencc import OpenCC
 
+
 # ==================== 背景筛选 ====================
 def _is_white(
     image, poly, white_v_thresh=200, white_s_thresh=30, white_ratio_thresh=0.6
@@ -25,9 +26,8 @@ def _is_white(
     return white_mask.mean() >= white_ratio_thresh
 
 
-def filter_white_bg(data):
+def filter_white_bg(data, img_path):
     """过滤白色背景的文本框"""
-    img_path = data["img_path"]
     image = cv2.imread(img_path)
     if image is None:
         raise ValueError(f"无法读取图片: {img_path}")
@@ -38,7 +38,7 @@ def filter_white_bg(data):
             keep_polys.append(poly)
             keep_texts.append(text)
 
-    return {"img_path": img_path, "polys": keep_polys, "texts": keep_texts}
+    return {"polys": keep_polys, "texts": keep_texts}
 
 
 # ==================== 文本处理 ====================
@@ -81,7 +81,7 @@ def filter_texts(data):
             new_polys.append(poly)
             new_texts.append(cleaned)
 
-    return {"img_path": data["img_path"], "polys": new_polys, "texts": new_texts}
+    return {"polys": new_polys, "texts": new_texts}
 
 
 # ==================== 合并靠近框 ====================
@@ -165,8 +165,8 @@ def _merge_group_2_box(data, group):
 
 def merge(data):
     """
-    - input: dict(img_path, polys, texts)
-    - return: dict(img_path, boxes, texts)
+    - input: dict(polys, texts)
+    - return: dict(boxes, texts)
         box: [x1, y1, x2, y2]
     """
     merged_boxes = []
@@ -180,22 +180,21 @@ def merge(data):
     assert len(merged_boxes) == len(merged_texts), "boxes 与 texts 数量不一致"
 
     return {
-        "img_path": data["img_path"],
         "boxes": merged_boxes,
         "texts": merged_texts,
     }
 
 
 # ==================== 可视化 ====================
-def draw_data(data, output_dir="output"):
+def draw_data(data, img_path, output_dir="output"):
     """绘制结果并保存"""
-    img = cv2.imread(data["img_path"])
+    img = cv2.imread(img_path)
     if img is None:
         return
 
     h, w = img.shape[:2]
 
-    print(f"\n图片: {data['img_path']}")
+    print(f"\n图片: {img_path}")
     for i, text in enumerate(data["texts"], 1):
         print(f"[{i}] {text}")
 
@@ -204,9 +203,7 @@ def draw_data(data, output_dir="output"):
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(w - 1, x2), min(h - 1, y2)
 
-        # 画框
         cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 1)
-        # 标序号
         cv2.putText(
             img,
             str(i),
@@ -218,6 +215,6 @@ def draw_data(data, output_dir="output"):
         )
 
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, os.path.basename(data["img_path"]))
+    out_path = os.path.join(output_dir, os.path.basename(img_path))
     cv2.imwrite(out_path, img)
     print(f"\n结果已保存: {out_path}")
